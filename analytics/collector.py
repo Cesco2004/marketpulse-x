@@ -109,42 +109,62 @@ class MetricsCollector:
             self._collect_account_metrics()
 
     def _collect_tweet_metrics(self):
-        """Scrape engagement metrics for all recently posted tweets."""
+        """Scrape engagement metrics for all recently posted tweets.
+
+        Uses get_user_tweets to batch-fetch tweets from our own timeline
+        (get_tweet_by_id has a twikit parsing bug), then matches them
+        against our posted tweet IDs.
+        """
         cfg = get_analytics_config()
         lookback = cfg.get("lookback_days", 30)
-        tweets = get_posted_tweets_with_ids(days=lookback)
+        db_tweets = get_posted_tweets_with_ids(days=lookback)
 
-        if not tweets:
+        if not db_tweets:
             print("[Analytics] No posted tweets to scrape.")
             return
 
+        # Build lookup: x_tweet_id -> post_id
+        id_to_post = {t["x_tweet_id"]: t["id"] for t in db_tweets}
+        target_ids = set(id_to_post.keys())
+
+        # Fetch tweets from our own timeline in batches
+        username = cfg.get("own_username", "").strip().lstrip("@")
+        if not username:
+            print("[Analytics] No own_username configured, cannot fetch timeline.")
+            return
+
+        try:
+            user_id, _ = twitter_reader.get_user_id(username)
+        except Exception as e:
+            print(f"[Analytics] Could not resolve @{username}: {e}")
+            self.stats["errors"] += 1
+            return
+
         scraped = 0
-        for tweet_data in tweets:
-            if self._stop_event.is_set():
-                break
-            tweet_id = tweet_data["x_tweet_id"]
-            post_id = tweet_data["id"]
-            try:
-                tweet = twitter_reader.client.get_tweet_by_id(tweet_id)
-                likes = int(tweet.favorite_count or 0)
-                retweets = int(tweet.retweet_count or 0)
-                replies = int(tweet.reply_count or 0)
-                quotes = int(tweet.quote_count or 0)
-                views = int(tweet.view_count or 0)
-                bookmarks = int(getattr(tweet, "bookmark_count", 0) or 0)
+        try:
+            timeline = twitter_reader.client.get_user_tweets(
+                user_id, tweet_type="Tweets", count=max(len(target_ids), 20)
+            )
+            for tweet in timeline:
+                if self._stop_event.is_set():
+                    break
+                if tweet.id in target_ids:
+                    post_id = id_to_post[tweet.id]
+                    likes = int(tweet.favorite_count or 0)
+                    retweets = int(tweet.retweet_count or 0)
+                    replies = int(tweet.reply_count or 0)
+                    quotes = int(tweet.quote_count or 0)
+                    views = int(tweet.view_count or 0)
+                    bookmarks = int(getattr(tweet, "bookmark_count", 0) or 0)
 
-                save_tweet_metrics(tweet_id, post_id, likes, retweets, replies, quotes, views, bookmarks)
-                scraped += 1
-            except Exception as e:
-                print(f"[Analytics] Failed to scrape tweet {tweet_id}: {e}")
-                self.stats["errors"] += 1
-
-            # Rate limiting: random delay between requests
-            import time
-            time.sleep(random.uniform(2, 3.5))
+                    save_tweet_metrics(tweet.id, post_id, likes, retweets, replies, quotes, views, bookmarks)
+                    scraped += 1
+        except Exception as e:
+            print(f"[Analytics] Failed to fetch timeline: {e}")
+            self.stats["errors"] += 1
 
         self.stats["tweets_scraped"] = scraped
-        print(f"[Analytics] Scraped {scraped}/{len(tweets)} tweets.")
+        print(f"[Analytics] Scraped {scraped}/{len(target_ids)} tweets.")
 
     def _collect_account_metrics(self):
         """Scrape account follower/following counts."""
