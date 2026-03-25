@@ -8,7 +8,7 @@ import pytz
 from storage.database import (
     get_approved_posts, mark_as_posted, get_schedule_config,
     update_schedule_config, set_post_scheduled_at, clear_all_scheduled_times,
-    get_post_by_id,
+    get_post_by_id, get_usage_limits, get_daily_tweet_count,
 )
 from publisher.x_publisher import post_tweet
 
@@ -47,13 +47,35 @@ class QuantumScheduler:
         update_schedule_config(is_active=0)
 
     def _compute_schedule(self):
-        """Pre-compute all post times and store them in DB."""
+        """Pre-compute post times for today, respecting daily tweet limit.
+
+        Takes at most max_tweets_per_day posts from the queue (minus already
+        posted today), then distributes them across the active window.
+        In random mode, gaps are auto-calculated to spread tweets evenly
+        across the window if the user-configured gaps don't fit.
+        """
         config = get_schedule_config()
-        posts = get_approved_posts()
+        all_posts = get_approved_posts()
+
+        if not all_posts:
+            self._schedule = []
+            return
+
+        # Respect daily tweet limit from usage_limits
+        limits = get_usage_limits()
+        max_per_day = limits.get("x_max_tweets_per_day", 15)
+        already_posted_today = get_daily_tweet_count()
+        remaining_today = max(0, max_per_day - already_posted_today)
+
+        # Take only what we can post today
+        posts = all_posts[:remaining_today]
 
         if not posts:
             self._schedule = []
+            print(f"[Scheduler] Daily limit reached ({already_posted_today}/{max_per_day}). Nothing to schedule.")
             return
+
+        print(f"[Scheduler] Scheduling {len(posts)}/{len(all_posts)} posts (limit: {remaining_today} remaining today)")
 
         tz_name = config.get("timezone", "Europe/Paris")
         try:
@@ -89,7 +111,7 @@ class QuantumScheduler:
             end_hour = config.get("random_end_hour", 22)
             end_minute = config.get("random_end_minute", 0)
 
-            # Build the first valid start time in local tz
+            # Build the active window in local tz
             window_start_local = now_local.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
             window_end_local = now_local.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
 
@@ -98,13 +120,30 @@ class QuantumScheduler:
                 window_start_local += timedelta(days=1)
                 window_end_local += timedelta(days=1)
 
-            # If we're before today's window, use window start
-            if now_local < window_start_local:
-                cursor_local = window_start_local
-            else:
-                # First post: random gap from now
-                first_gap = random.randint(min_gap, max_gap)
-                cursor_local = now_local + timedelta(minutes=first_gap)
+            # Effective start: either window start or now (whichever is later)
+            effective_start = max(now_local, window_start_local)
+
+            # Calculate available minutes in today's remaining window
+            available_minutes = (window_end_local - effective_start).total_seconds() / 60
+
+            # Auto-adjust gaps if the configured gaps can't fit all posts in the window
+            # Minimum total gap needed = min_gap * (n-1), we need this <= available_minutes
+            n = len(posts)
+            if n > 1:
+                total_min_gap_needed = min_gap * (n - 1)
+                if total_min_gap_needed > available_minutes:
+                    # Shrink gaps to fit: spread evenly with small random jitter
+                    even_gap = max(1, int(available_minutes / n))
+                    min_gap = max(1, even_gap - 5)
+                    max_gap = even_gap + 5
+                    print(f"[Scheduler] Auto-adjusted gaps to {min_gap}-{max_gap}min to fit {n} tweets in {available_minutes:.0f}min window")
+                elif max_gap * (n - 1) > available_minutes:
+                    # Max gap is too large, cap it
+                    max_gap = max(min_gap + 1, int(available_minutes / (n - 1)))
+
+            # First post: small random gap from now
+            first_gap = random.randint(min_gap, min(max_gap, min_gap + 15))
+            cursor_local = effective_start + timedelta(minutes=first_gap)
 
             day_offset = 0
             for post in posts:
