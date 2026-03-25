@@ -4,8 +4,10 @@ import sys
 # Add project root to path so we can import config, storage, etc.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flask import Flask
+from flask import Flask, redirect, url_for, request
+from flask_login import current_user
 from storage.database import init_db
+from dashboard.auth import login_manager
 
 
 def create_app():
@@ -15,6 +17,10 @@ def create_app():
         static_folder=os.path.join(os.path.dirname(__file__), "static"),
     )
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", "quantum-brief-local-dashboard")
+
+    # Flask-Login
+    login_manager.init_app(app)
+
     app.jinja_env.filters["split"] = lambda s, sep=",": s.split(sep)
 
     import json as _json
@@ -26,6 +32,16 @@ def create_app():
     app.jinja_env.filters["from_json"] = _from_json
 
     init_db()
+
+    # Auth blueprint
+    from dashboard.routes.auth_routes import bp as auth_bp
+    app.register_blueprint(auth_bp)
+
+    @app.before_request
+    def require_login():
+        allowed = ("auth.login", "static")
+        if not current_user.is_authenticated and request.endpoint not in allowed:
+            return redirect(url_for("auth.login"))
 
     # Register route blueprints
     from dashboard.routes.dashboard import bp as dashboard_bp

@@ -24,7 +24,7 @@ from storage.database import (
 )
 from engagement.twitter_reader import twitter_reader
 from engagement.reply_generator import generate_reply, pick_best_reply, check_toxicity
-from publisher.x_publisher import reply_to_tweet as official_reply_to_tweet
+from engagement.twitter_reader import twikit_lock
 from limiter.usage_limiter import usage_limiter
 
 
@@ -365,7 +365,8 @@ class EngagementMonitor:
             if self._stop_event.is_set():
                 break
             try:
-                tweet_id = official_reply_to_tweet(reply["original_tweet_id"], reply["reply_content"])
+                with twikit_lock:
+                    tweet_id = twitter_reader.reply_to_tweet(reply["original_tweet_id"], reply["reply_content"])
                 mark_engagement_reply_posted(reply["id"], tweet_id)
                 self.stats["replies_posted"] += 1
                 print(f"[Engagement] Posted reply to @{reply['target_username']}: {reply['reply_content'][:60]}...")

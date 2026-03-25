@@ -12,7 +12,7 @@ from storage.database import (
     save_tweet_metrics,
     save_account_metrics,
 )
-from engagement.twitter_reader import twitter_reader, twikit_lock
+from engagement.twitter_reader import twitter_reader, twikit_lock, _run_async
 
 
 class MetricsCollector:
@@ -142,9 +142,9 @@ class MetricsCollector:
 
         scraped = 0
         try:
-            timeline = twitter_reader.client.get_user_tweets(
+            timeline = _run_async(twitter_reader.client.get_user_tweets(
                 user_id, tweet_type="Tweets", count=max(len(target_ids), 20)
-            )
+            ))
             for tweet in timeline:
                 if self._stop_event.is_set():
                     break
@@ -175,7 +175,7 @@ class MetricsCollector:
             return
 
         try:
-            user = twitter_reader.client.get_user_by_screen_name(username)
+            user = _run_async(twitter_reader.client.get_user_by_screen_name(username))
             save_account_metrics(
                 followers=int(user.followers_count or 0),
                 following=int(user.following_count or 0),

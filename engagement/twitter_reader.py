@@ -1,3 +1,4 @@
+import asyncio
 import os
 import threading
 
@@ -12,6 +13,19 @@ COOKIES_PATH = os.getenv(
     "TWIKIT_COOKIES_PATH",
     os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "twikit_cookies.json"),
 )
+
+
+def _run_async(coro):
+    """Run an async coroutine from synchronous code."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, coro).result()
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 
 class TwitterReader:
@@ -32,11 +46,11 @@ class TwitterReader:
             raise RuntimeError(
                 "twikit credentials missing. Set X_USERNAME, X_EMAIL, and X_PASSWORD in .env"
             )
-        self.client.login(
+        _run_async(self.client.login(
             auth_info_1=config.X_USERNAME,
             auth_info_2=config.X_EMAIL or None,
             password=config.X_PASSWORD,
-        )
+        ))
         self.client.save_cookies(COOKIES_PATH)
         self._logged_in = True
 
@@ -44,15 +58,15 @@ class TwitterReader:
         """Resolve @username -> (user_id, display_name)."""
         self.ensure_login()
         username = username.lstrip("@").strip()
-        user = self.client.get_user_by_screen_name(username)
+        user = _run_async(self.client.get_user_by_screen_name(username))
         return user.id, user.name
 
     def get_recent_tweets(self, user_id, count=10):
         """Get recent original tweets (no RT, no replies) for a user."""
         self.ensure_login()
-        result = self.client.get_user_tweets(
+        result = _run_async(self.client.get_user_tweets(
             user_id, tweet_type="Tweets", count=count
-        )
+        ))
         tweets = []
         for tweet in result:
             # Skip retweets
@@ -69,7 +83,7 @@ class TwitterReader:
     def reply_to_tweet(self, tweet_id, reply_text):
         """Post a reply to a tweet via twikit (bypasses API tier restrictions)."""
         self.ensure_login()
-        tweet = self.client.create_tweet(text=reply_text, reply_to=tweet_id)
+        tweet = _run_async(self.client.create_tweet(text=reply_text, reply_to=tweet_id))
         return tweet.id
 
     def invalidate_session(self):
