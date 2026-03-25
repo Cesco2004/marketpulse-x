@@ -61,9 +61,11 @@ class QuantumScheduler:
             self._schedule = []
             return
 
-        # Respect daily tweet limit from usage_limits
+        # Respect both schedule config (desired) and usage limits (safety cap)
         limits = get_usage_limits()
-        max_per_day = limits.get("x_max_tweets_per_day", 15)
+        safety_cap = limits.get("x_max_tweets_per_day", 15)
+        schedule_cap = config.get("random_tweets_per_day", 999) if config["mode"] == "random" else 999
+        max_per_day = min(safety_cap, schedule_cap)
         already_posted_today = get_daily_tweet_count()
         remaining_today = max(0, max_per_day - already_posted_today)
 
