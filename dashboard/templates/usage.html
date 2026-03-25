@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}API Usage - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>API Usage</h2>
+</div>
+
+<div class="usage-grid">
+    <div class="usage-card">
+        <h4>Mistral AI</h4>
+        <div class="usage-number">{{ "{:,}".format(usage.mistral_tokens_total) }}</div>
+        <div class="usage-detail">tokens used total</div>
+        <div style="margin-top:0.75rem">
+            <div class="usage-detail">{{ "{:,}".format(usage.mistral_tokens_input) }} input &middot; {{ "{:,}".format(usage.mistral_tokens_output) }} output</div>
+            <div class="usage-detail">{{ usage.mistral_calls }} API calls</div>
+            <div class="usage-detail" style="margin-top:0.5rem">
+                Estimated cost: <strong>{{ "%.6f"|format(usage.mistral_cost) }} EUR</strong>
+            </div>
+            <div class="usage-detail">Free tier: 1,000,000 tokens/month</div>
+            <div class="usage-bar">
+                {% set pct = (usage.mistral_tokens_total / 1000000 * 100) if usage.mistral_tokens_total else 0 %}
+                <div class="usage-bar-fill" style="width:{{ pct }}%"></div>
+            </div>
+            <div class="usage-detail">{{ "%.2f"|format(pct) }}% of monthly free tier used</div>
+        </div>
+    </div>
+
+    <div class="usage-card">
+        <h4>X / Twitter API</h4>
+        <div class="usage-number">{{ usage.x_posts }}</div>
+        <div class="usage-detail">tweets posted via API</div>
+        <div style="margin-top:0.75rem">
+            <div class="usage-detail">
+                Estimated cost: <strong>${{ "%.4f"|format(usage.x_cost) }} USD</strong>
+            </div>
+            <div class="usage-detail">~$0.01 per tweet (pay-per-use)</div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent API calls -->
+<div class="section-title">Recent API Calls</div>
+<table>
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Service</th>
+            <th>Endpoint</th>
+            <th>Tokens In</th>
+            <th>Tokens Out</th>
+            <th>Est. Cost</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for log in usage.recent %}
+        <tr>
+            <td>{{ log.created_at }}</td>
+            <td><span class="badge badge-{{ 'news' if log.service == 'mistral' else 'question' }}">{{ log.service }}</span></td>
+            <td>{{ log.endpoint }}</td>
+            <td>{{ "{:,}".format(log.tokens_input) if log.tokens_input else '-' }}</td>
+            <td>{{ "{:,}".format(log.tokens_output) if log.tokens_output else '-' }}</td>
+            <td>{{ "%.6f"|format(log.cost_estimate) if log.cost_estimate else '-' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if not usage.recent %}
+<p>No API calls logged yet. Run "Fetch & Generate" from the dashboard.</p>
+{% endif %}
+{% endblock %}

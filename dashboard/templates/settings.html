@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Settings - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Settings</h2>
+</div>
+
+<!-- Test Score Tool -->
+<div class="section-title">Test Tweet Score</div>
+<div class="post-card" style="margin-bottom:1.5rem">
+    <form hx-post="/api/settings/test-score" hx-target="#test-result">
+        <textarea name="text" rows="2" placeholder="Paste a tweet here to see its quality score..." style="font-size:0.85rem;margin-bottom:0.5rem"></textarea>
+        <button type="submit" class="outline" style="padding:0.25rem 0.75rem;font-size:0.75rem">Score it</button>
+    </form>
+    <div id="test-result"></div>
+</div>
+
+<!-- Quality Scoring Config -->
+<form hx-post="/api/settings/quality" hx-target="#quality-result">
+    <div class="section-title">Quality Scoring</div>
+    <div class="post-card" style="margin-bottom:1rem">
+        <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap">
+            <label style="font-size:0.8rem;display:inline-flex;align-items:center;gap:0.4rem">
+                <input type="checkbox" name="ai_detection_enabled" {% if qconfig.ai_detection_enabled %}checked{% endif %}>
+                AI Detection
+            </label>
+            <label style="font-size:0.8rem;display:inline-flex;align-items:center;gap:0.4rem">
+                <input type="checkbox" name="readability_enabled" {% if qconfig.readability_enabled %}checked{% endif %}>
+                Readability
+            </label>
+            <label style="font-size:0.8rem;display:inline-flex;align-items:center;gap:0.4rem">
+                <input type="checkbox" name="emoji_enabled" {% if qconfig.emoji_enabled %}checked{% endif %}>
+                Emoji Compliance
+            </label>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem;margin-bottom:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">AI Weight</label>
+                <input type="number" name="weight_ai" value="{{ qconfig.weight_ai }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Readability Weight</label>
+                <input type="number" name="weight_readability" value="{{ qconfig.weight_readability }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Emoji Weight</label>
+                <input type="number" name="weight_emoji" value="{{ qconfig.weight_emoji }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Min Quality Score</label>
+                <input type="number" name="min_quality_score" value="{{ qconfig.min_quality_score }}" step="5" min="0" max="100" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Auto-Reject Below</label>
+                <input type="number" name="auto_reject_below" value="{{ qconfig.auto_reject_below }}" step="5" min="0" max="100" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Auto-Approve Above</label>
+                <input type="number" name="auto_approve_above" value="{{ qconfig.auto_approve_above|default(70) }}" step="5" min="0" max="100" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Detection -->
+    <div class="section-title">AI Detection Tuning</div>
+    <div class="post-card" style="margin-bottom:1rem">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Em-dash Penalty</label>
+                <input type="number" name="ai_emdash_penalty" value="{{ qconfig.ai_emdash_penalty }}" min="0" max="50" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Phrase Penalty</label>
+                <input type="number" name="ai_phrase_penalty" value="{{ qconfig.ai_phrase_penalty }}" min="0" max="50" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+        <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Penalized AI Phrases (one per line)</label>
+        <textarea name="ai_penalty_phrases" rows="6" style="font-size:0.75rem;font-family:monospace">{{ ai_phrases|join('\n') }}</textarea>
+    </div>
+
+    <!-- Readability -->
+    <div class="section-title">Readability Tuning</div>
+    <div class="post-card" style="margin-bottom:1rem">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Jargon Penalty</label>
+                <input type="number" name="readability_jargon_penalty" value="{{ qconfig.readability_jargon_penalty }}" min="0" max="30" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Max Grade Level</label>
+                <input type="number" name="readability_max_grade_level" value="{{ qconfig.readability_max_grade_level }}" min="4" max="16" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+        <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Jargon Blacklist (one per line)</label>
+        <textarea name="readability_jargon_list" rows="4" style="font-size:0.75rem;font-family:monospace">{{ jargon_list|join('\n') }}</textarea>
+    </div>
+
+    <!-- Emoji -->
+    <div class="section-title">Emoji Preferences</div>
+    <div class="post-card" style="margin-bottom:1rem">
+        <div style="margin-bottom:0.75rem">
+            <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Leading Emoji Bonus</label>
+            <input type="number" name="emoji_leading_bonus" value="{{ qconfig.emoji_leading_bonus }}" min="0" max="100" style="font-size:0.8rem;padding:0.3rem">
+        </div>
+        <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Preferred Emojis (space-separated)</label>
+        <div style="font-size:1.5rem;margin-bottom:0.5rem;letter-spacing:0.3rem">{{ emoji_list|join(' ') }}</div>
+        <input type="text" name="emoji_preferred" value="{{ emoji_list|join(' ') }}" style="font-size:1.1rem;letter-spacing:0.2rem" placeholder="🚨 🔥 ⚡ 💡 🚀">
+    </div>
+
+    <button type="submit" class="btn-fetch" style="margin-bottom:0.5rem">Save Quality Settings</button>
+    <div id="quality-result"></div>
+</form>
+
+<!-- Topic Categories -->
+<form hx-post="/api/settings/categories" hx-target="#cat-result" style="margin-top:1.5rem">
+    <div class="section-title">Topic Categories</div>
+    <div style="display:grid;gap:0.4rem;margin-bottom:0.75rem">
+        {% for cat in categories %}
+        <div class="post-card" style="padding:0.6rem;display:flex;align-items:center;gap:0.75rem">
+            <input type="checkbox" name="cat_enabled_{{ cat.id }}" {% if cat.is_enabled %}checked{% endif %} style="margin:0">
+            <span style="font-size:1.1rem">{{ cat.icon }}</span>
+            <span style="font-size:0.85rem;font-weight:600;flex:1">{{ cat.label }}</span>
+            <span style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">weight</span>
+            <input type="number" name="cat_weight_{{ cat.id }}" value="{{ cat.weight }}" step="0.1" min="0" max="2" style="width:70px;font-size:0.8rem;padding:0.2rem 0.4rem;text-align:center">
+        </div>
+        {% endfor %}
+    </div>
+    <button type="submit" class="outline" style="padding:0.3rem 0.85rem;font-size:0.78rem">Save Categories</button>
+    <div id="cat-result"></div>
+</form>
+
+<!-- Image Settings -->
+<form hx-post="/api/settings/images" hx-target="#image-result" style="margin-top:1.5rem">
+    <div class="section-title">Image Settings</div>
+    <div class="post-card" style="margin-bottom:1rem">
+        <div style="display:flex;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap">
+            <label style="font-size:0.8rem;display:inline-flex;align-items:center;gap:0.4rem">
+                <input type="checkbox" name="images_enabled" {% if iconfig.images_enabled %}checked{% endif %}>
+                Enable image attachment
+            </label>
+            <label style="font-size:0.8rem;display:inline-flex;align-items:center;gap:0.4rem">
+                <input type="checkbox" name="prefer_article_images" {% if iconfig.prefer_article_images %}checked{% endif %}>
+                Prefer article images
+            </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Image Ratio (0.0 - 1.0)</label>
+                <input type="number" name="image_ratio" value="{{ iconfig.image_ratio }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Min Image Score</label>
+                <input type="number" name="min_image_score" value="{{ iconfig.min_image_score }}" step="5" min="0" max="100" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Unsplash API Key (optional)</label>
+                <input type="password" name="unsplash_api_key" value="{{ iconfig.unsplash_api_key or '' }}" placeholder="Leave empty to skip" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Pexels API Key (optional)</label>
+                <input type="password" name="pexels_api_key" value="{{ iconfig.pexels_api_key or '' }}" placeholder="Leave empty to skip" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+    </div>
+    <button type="submit" class="outline" style="padding:0.3rem 0.85rem;font-size:0.78rem">Save Image Settings</button>
+    <div id="image-result"></div>
+</form>
+
+{% endblock %}

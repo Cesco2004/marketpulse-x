@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Dashboard</h2>
+</div>
+
+<!-- Kill Switch Banner -->
+{% if kill_switch_active %}
+<div style="background:var(--red,#ef4444);color:white;padding:0.75rem 1.2rem;border-radius:8px;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;font-size:0.88rem">
+    <span><strong>KILL SWITCH ACTIVE</strong>{% if kill_switch_reason %} &mdash; {{ kill_switch_reason }}{% endif %}</span>
+    <a href="/limits" style="color:white;text-decoration:underline;font-size:0.82rem">Manage</a>
+</div>
+{% endif %}
+
+<!-- Stats cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="number">{{ stats.total_articles }}</div>
+        <div class="label">Articles</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.get('pending_review', 0) }}</div>
+        <div class="label">Pending Review</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.get('approved', 0) }}</div>
+        <div class="label">In Queue</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.get('posted', 0) }}</div>
+        <div class="label">Published</div>
+    </div>
+</div>
+
+<!-- Active Processes (auto-refresh every 30s) -->
+<div class="section-title">Active Processes</div>
+<div id="processes-widget" hx-get="/api/processes" hx-trigger="every 30s" hx-swap="innerHTML"
+     style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.6rem;margin-bottom:1.25rem">
+    {% for p in processes %}
+    <div class="process-card">
+        <div class="process-dot {{ 'active' if p.active else 'inactive' }}"></div>
+        <div class="process-info">
+            <div class="process-name">{{ p.name }}</div>
+            <div class="process-detail">{{ p.detail }}</div>
+        </div>
+        <span style="font-size:0.68rem;font-weight:600;{% if p.active %}color:var(--green){% else %}color:var(--text-tertiary){% endif %}">
+            {% if p.active %}ON{% else %}OFF{% endif %}
+        </span>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Pipeline -->
+<div class="section-title">Content Pipeline</div>
+<div class="pipeline-bar">
+    <div class="pipeline-step">
+        <div class="step-number">{{ stats.total_articles }}</div>
+        <div class="step-label">Fetched</div>
+    </div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">
+        <div class="step-number">{{ stats.get('prefiltered', 0) }}</div>
+        <div class="step-label">Scored</div>
+    </div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">
+        <div class="step-number">{{ stats.get('selected', 0) }}</div>
+        <div class="step-label">Selected</div>
+    </div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">
+        <div class="step-number">{{ stats.get('pending_review', 0) + stats.get('approved', 0) + stats.get('posted', 0) + stats.get('rejected', 0) }}</div>
+        <div class="step-label">Generated</div>
+    </div>
+    <div class="pipeline-arrow">&rarr;</div>
+    <div class="pipeline-step">
+        <div class="step-number">{{ stats.get('posted', 0) }}</div>
+        <div class="step-label">Published</div>
+    </div>
+</div>
+
+<!-- API Usage Summary -->
+<div class="section-title">API Usage (Estimates)</div>
+<div class="usage-grid">
+    <div class="usage-card">
+        <h4>Mistral API</h4>
+        <div class="usage-number">{{ usage.mistral_tokens_total|default(0) }}</div>
+        <div class="usage-detail">tokens used total</div>
+        <div class="usage-detail">{{ usage.mistral_calls|default(0) }} API calls &middot; ~{{ "%.4f"|format(usage.mistral_cost|default(0)) }} EUR est.</div>
+    </div>
+    <div class="usage-card">
+        <h4>X / Twitter API</h4>
+        <div class="usage-number">{{ usage.x_posts|default(0) }}</div>
+        <div class="usage-detail">tweets posted</div>
+        <div class="usage-detail">~{{ "%.4f"|format(usage.x_cost|default(0)) }} USD est.</div>
+    </div>
+</div>
+
+<!-- Actions -->
+<div class="section-title">Quick Actions</div>
+<div class="action-buttons">
+    <button class="btn-fetch" hx-post="/api/fetch" hx-target="#action-result" hx-indicator="#fetch-spinner" hx-disabled-elt="this">
+        Fetch & Generate
+    </button>
+    <button class="btn-post" hx-post="/api/post-next" hx-target="#action-result" hx-confirm="Post the next approved tweet?" hx-disabled-elt="this">
+        Post Next Tweet
+    </button>
+    <span id="fetch-spinner" class="htmx-indicator" style="font-size:0.8rem;color:var(--text-secondary)">
+        Fetching RSS feeds & generating posts...
+    </span>
+</div>
+
+<div id="action-result"></div>
+{% endblock %}

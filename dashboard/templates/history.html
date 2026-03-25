@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}History - Quantum Brief{% endblock %}
+
+{% block content %}
+<h2>Post History</h2>
+
+<p>{{ posts|length }} post(s) published.</p>
+
+{% for post in posts %}
+<div class="post-card">
+    <div class="post-content">{{ post.content }}</div>
+    <div class="post-meta">
+        <span class="badge badge-{{ post.post_type }}">{{ post.post_type }}</span>
+        <span>{{ post.content|length }} chars</span>
+        <span style="color:var(--qb-gray);font-size:0.85rem">
+            Posted: {{ post.posted_at or 'unknown' }}
+        </span>
+        {% if post.x_tweet_id %}
+        <a href="https://x.com/QEdgeIntel/status/{{ post.x_tweet_id }}" target="_blank" rel="noopener" style="font-size:0.85rem">
+            View on X
+        </a>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+{% if not posts %}
+<p>No posts published yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}Engagement - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Engagement Monitor</h2>
+</div>
+
+<!-- Monitor Status -->
+<div class="post-card" style="margin-bottom:1.5rem;display:flex;align-items:center;justify-content:space-between">
+    <div>
+        <strong>Monitor:</strong>
+        <span style="font-size:0.8rem;color:var(--qb-dim);margin-left:0.5rem">
+            Polls: {{ monitor_stats.get('polls', 0) }} |
+            Tweets: {{ monitor_stats.get('new_tweets', 0) }} |
+            Replies: {{ monitor_stats.get('replies_posted', 0) }} |
+            Today: {{ today_count }}/{{ config.max_replies_per_day }}
+        </span>
+    </div>
+    <div style="display:flex;gap:0.5rem;align-items:center" id="monitor-controls">
+        {% if monitor_running %}
+            <button hx-post="/api/engagement/monitor/toggle" hx-target="#monitor-controls" hx-swap="innerHTML"
+                class="outline" style="padding:0.25rem 0.75rem;font-size:0.75rem;color:var(--qb-red)">Stop</button>
+            <span class="cascade-text" style="color:var(--qb-green);font-weight:600"><span>R</span><span style="animation:cascade 6s ease 0.0s infinite">u</span><span style="animation:cascade 6s ease 0.15s infinite">n</span><span style="animation:cascade 6s ease 0.3s infinite">n</span><span style="animation:cascade 6s ease 0.45s infinite">i</span><span style="animation:cascade 6s ease 0.6s infinite">n</span><span style="animation:cascade 6s ease 0.75s infinite">g</span></span>
+        {% else %}
+            <button hx-post="/api/engagement/monitor/toggle" hx-target="#monitor-controls" hx-swap="innerHTML"
+                class="outline" style="padding:0.25rem 0.75rem;font-size:0.75rem">Start</button>
+            <button hx-post="/api/engagement/poll-now" hx-swap="innerHTML" hx-target="#poll-result"
+                class="outline" style="padding:0.25rem 0.75rem;font-size:0.75rem">Poll Now</button>
+            <span id="poll-result"></span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Config -->
+<div class="section-title">Configuration</div>
+<form hx-post="/api/engagement/config" hx-target="#config-result">
+    <div class="post-card" style="margin-bottom:1.5rem">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Poll Interval (min)</label>
+                <input type="number" name="poll_interval_minutes" value="{{ config.poll_interval_minutes }}" min="1" max="60" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Max Replies/Day</label>
+                <input type="number" name="max_replies_per_day" value="{{ config.max_replies_per_day }}" min="1" max="50" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Max/Account/Day</label>
+                <input type="number" name="max_replies_per_account_per_day" value="{{ config.max_replies_per_account_per_day }}" min="1" max="20" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Reply Window (hours)</label>
+                <input type="number" name="reply_window_hours" value="{{ config.reply_window_hours }}" min="1" max="48" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Delay Min (min)</label>
+                <input type="number" name="reply_delay_min_minutes" value="{{ config.reply_delay_min_minutes }}" min="0" max="60" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Delay Max (min)</label>
+                <input type="number" name="reply_delay_max_minutes" value="{{ config.reply_delay_max_minutes }}" min="1" max="120" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Active Start Hour</label>
+                <input type="number" name="active_start_hour" value="{{ config.active_start_hour }}" min="0" max="23" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Active End Hour</label>
+                <input type="number" name="active_end_hour" value="{{ config.active_end_hour }}" min="1" max="24" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:0.75rem">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Auto-Reject Below Score</label>
+                <input type="number" name="auto_reject_below" value="{{ config.auto_reject_below }}" step="5" min="0" max="100" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Max Reply Length</label>
+                <input type="number" name="max_reply_length" value="{{ config.max_reply_length }}" min="50" max="280" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+        </div>
+        <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.75rem">
+            <button type="submit" class="outline" style="padding:0.25rem 0.75rem;font-size:0.75rem">Save Config</button>
+            <span id="config-result"></span>
+        </div>
+    </div>
+</form>
+
+<!-- Target Accounts -->
+<div class="section-title">Target Accounts ({{ accounts|length }})</div>
+<div class="post-card" style="margin-bottom:1.5rem">
+    {% if accounts %}
+    <table style="width:100%;font-size:0.8rem;margin-bottom:1rem">
+        <thead>
+            <tr style="text-align:left;color:var(--qb-dim);font-size:0.7rem;text-transform:uppercase">
+                <th>Username</th>
+                <th>Category</th>
+                <th>Style</th>
+                <th>Priority</th>
+                <th>Last Polled</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for a in accounts %}
+            <tr id="account-row-{{ a.id }}">
+                <td><strong>@{{ a.username }}</strong></td>
+                <td id="account-cat-{{ a.id }}">{{ a.category }}</td>
+                <td id="account-style-{{ a.id }}">{{ a.reply_style }}</td>
+                <td id="account-prio-{{ a.id }}">{{ a.priority }}</td>
+                <td style="color:var(--qb-dim)">{{ a.last_polled_at or 'never' }}</td>
+                <td>
+                    <span id="account-status-{{ a.id }}">
+                    {% if a.is_enabled %}
+                        <span style="color:var(--qb-green);font-weight:600">ON</span>
+                    {% else %}
+                        <span style="color:var(--qb-red);font-weight:600">OFF</span>
+                    {% endif %}
+                    </span>
+                    {% if a.poll_errors %}
+                        <span style="color:var(--qb-red);font-size:0.7rem">({{ a.poll_errors }} err)</span>
+                    {% endif %}
+                </td>
+                <td style="white-space:nowrap">
+                    <button hx-post="/api/engagement/accounts/{{ a.id }}/toggle" hx-target="#account-status-{{ a.id }}" hx-swap="innerHTML"
+                        class="outline" style="padding:0.15rem 0.5rem;font-size:0.7rem">Toggle</button>
+                    <button hx-get="/api/engagement/accounts/{{ a.id }}/edit" hx-target="#account-row-{{ a.id }}" hx-swap="outerHTML"
+                        class="outline" style="padding:0.15rem 0.5rem;font-size:0.7rem;color:var(--qb-blue,#60a5fa)">Edit</button>
+                    <button hx-post="/api/engagement/accounts/{{ a.id }}/delete" hx-target="#account-row-{{ a.id }}" hx-swap="outerHTML"
+                        hx-confirm="Delete @{{ a.username }}?"
+                        class="outline" style="padding:0.15rem 0.5rem;font-size:0.7rem;color:var(--qb-red)">Del</button>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--qb-dim);font-size:0.85rem">No target accounts yet.</p>
+    {% endif %}
+
+    <!-- Add Account Form -->
+    <div style="border-top:1px solid var(--qb-border);padding-top:0.75rem;margin-top:0.5rem">
+        <form hx-post="/api/engagement/accounts/add" hx-target="#add-result" style="display:flex;gap:0.5rem;align-items:end;flex-wrap:wrap">
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Username</label>
+                <input type="text" name="username" placeholder="@username" required style="font-size:0.8rem;padding:0.3rem;width:140px">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Category</label>
+                <select name="category" style="font-size:0.8rem;padding:0.3rem">
+                    <option value="general">General</option>
+                    <option value="quantum">Quantum</option>
+                    <option value="ai">AI</option>
+                    <option value="robotics">Robotics</option>
+                    <option value="tech">Tech</option>
+                    <option value="influencer">Influencer</option>
+                    <option value="competitor">Competitor</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Reply Style</label>
+                <select name="reply_style" style="font-size:0.8rem;padding:0.3rem">
+                    <option value="mixed">Mixed (all styles)</option>
+                    <option value="complementary">Complementary</option>
+                    <option value="witty">Witty</option>
+                    <option value="question">Question</option>
+                    <option value="hot_take">Hot Take</option>
+                    <option value="agreement">Agreement</option>
+                    <option value="emoji_reaction">Emoji Reaction</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Priority</label>
+                <select name="priority" style="font-size:0.8rem;padding:0.3rem">
+                    <option value="0">0 (Super-High)</option>
+                    <option value="1">1 (High)</option>
+                    <option value="2" selected>2 (Normal)</option>
+                    <option value="3">3 (Low)</option>
+                </select>
+            </div>
+            <button type="submit" class="outline" style="padding:0.3rem 0.75rem;font-size:0.75rem">Add</button>
+            <span id="add-result"></span>
+        </form>
+    </div>
+</div>
+
+<!-- Pending Replies -->
+{% if pending %}
+<div class="section-title">Pending Replies ({{ pending|length }})</div>
+{% for r in pending %}
+<div class="post-card" style="margin-bottom:0.75rem">
+    <div style="display:flex;justify-content:space-between;margin-bottom:0.5rem">
+        <div>
+            <span style="font-size:0.7rem;color:var(--qb-dim)">Replying to <strong>@{{ r.target_username }}</strong></span>
+            &middot;
+            <span style="font-size:0.7rem;color:var(--qb-dim)">Style: {{ r.reply_style }}</span>
+            &middot;
+            <span style="font-size:0.7rem;{% if r.quality_score and r.quality_score >= 60 %}color:var(--qb-green){% elif r.quality_score and r.quality_score >= 40 %}color:var(--qb-yellow){% else %}color:var(--qb-red){% endif %}">
+                Score: {{ '%.1f'|format(r.quality_score) if r.quality_score else '?' }}
+            </span>
+        </div>
+        <div style="font-size:0.65rem;color:var(--qb-dim)">
+            {% if r.status == 'approved' and r.reply_after %}
+                Scheduled at {{ r.reply_after[11:16] }}
+            {% elif r.status == 'approved' %}
+                Waiting to post
+            {% else %}
+                {{ r.status }}
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Original tweet -->
+    <div style="background:var(--qb-bg);padding:0.5rem;border-radius:4px;margin-bottom:0.5rem;font-size:0.8rem;border-left:3px solid var(--qb-border)">
+        {{ r.original_tweet_text }}
+        <a href="{{ r.original_tweet_url or 'https://x.com/i/status/' ~ r.original_tweet_id }}" target="_blank" style="font-size:0.65rem;margin-left:0.5rem;color:var(--qb-dim)">view tweet &rarr;</a>
+    </div>
+
+    <!-- Our reply -->
+    <div style="padding:0.5rem;font-size:0.85rem;font-weight:500">
+        {{ r.reply_content }}
+        {% if r.x_reply_tweet_id %}
+        <a href="https://x.com/QEdgeIntel/status/{{ r.x_reply_tweet_id }}" target="_blank" style="font-size:0.65rem;margin-left:0.5rem;color:var(--qb-green)">view reply &rarr;</a>
+        {% endif %}
+    </div>
+
+    <div style="display:flex;gap:0.5rem;margin-top:0.5rem" id="reply-actions-{{ r.id }}">
+        <button hx-post="/api/engagement/replies/{{ r.id }}/post-now" hx-target="#reply-actions-{{ r.id }}" hx-swap="innerHTML"
+            class="outline" style="padding:0.2rem 0.6rem;font-size:0.7rem;color:var(--qb-green)">Post Now</button>
+        <button hx-post="/api/engagement/replies/{{ r.id }}/reject" hx-target="#reply-actions-{{ r.id }}" hx-swap="innerHTML"
+            class="outline" style="padding:0.2rem 0.6rem;font-size:0.7rem;color:var(--qb-red)">Reject</button>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- History -->
+<div class="section-title">Reply History</div>
+<div class="post-card">
+    {% if history %}
+    <table style="width:100%;font-size:0.78rem">
+        <thead>
+            <tr style="text-align:left;color:var(--qb-dim);font-size:0.7rem;text-transform:uppercase">
+                <th>Target</th>
+                <th>Reply</th>
+                <th>Style</th>
+                <th>Score</th>
+                <th>Status</th>
+                <th>Links</th>
+                <th>Created</th>
+                <th>Posted</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in history %}
+            <tr>
+                <td><strong>@{{ r.target_username }}</strong></td>
+                <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ r.reply_content }}">{{ r.reply_content }}</td>
+                <td>{{ r.reply_style }}</td>
+                <td>
+                    <span style="{% if r.quality_score and r.quality_score >= 60 %}color:var(--qb-green){% elif r.quality_score and r.quality_score >= 40 %}color:var(--qb-yellow){% else %}color:var(--qb-red){% endif %}">
+                        {{ '%.0f'|format(r.quality_score) if r.quality_score else '-' }}
+                    </span>
+                </td>
+                <td>
+                    {% if r.status == 'posted' %}
+                        <span style="color:var(--qb-green)">posted</span>
+                    {% elif r.status == 'rejected' %}
+                        <span style="color:var(--qb-red)" title="{{ r.reject_reason or '' }}">rejected</span>
+                    {% elif r.status == 'skipped' %}
+                        <span style="color:var(--qb-yellow,#fbbf24)">skipped</span>
+                    {% else %}
+                        {{ r.status }}
+                    {% endif %}
+                </td>
+                <td style="white-space:nowrap">
+                    <a href="{{ r.original_tweet_url or 'https://x.com/i/status/' ~ r.original_tweet_id }}" target="_blank" style="font-size:0.7rem;color:var(--qb-dim)">tweet</a>
+                    {% if r.x_reply_tweet_id %}
+                    &middot; <a href="https://x.com/QEdgeIntel/status/{{ r.x_reply_tweet_id }}" target="_blank" style="font-size:0.7rem;color:var(--qb-green)">reply</a>
+                    {% endif %}
+                </td>
+                <td style="color:var(--qb-dim);white-space:nowrap">{{ r.created_at[5:16] if r.created_at else '' }}</td>
+                <td style="color:var(--qb-dim);white-space:nowrap">
+                    {% if r.posted_at %}
+                        <span style="color:var(--qb-green)">{{ r.posted_at[11:16] }}</span>
+                    {% elif r.status == 'approved' and r.reply_after %}
+                        <span style="color:var(--qb-yellow,#fbbf24)">{{ r.reply_after[11:16] }}</span>
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--qb-dim);font-size:0.85rem">No replies yet. Add target accounts and run a poll.</p>
+    {% endif %}
+</div>
+{% endblock %}

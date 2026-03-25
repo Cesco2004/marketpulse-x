@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Review - Quantum Brief{% endblock %}
+
+{% block content %}
+<h2>Review Posts</h2>
+
+{% if batch_stats and (batch_stats.get('approved', 0) > 0 or batch_stats.get('rejected', 0) > 0) %}
+<div style="display:flex;gap:1.5rem;padding:0.6rem 1rem;background:rgba(99,102,241,0.08);border-radius:6px;font-size:0.8rem;margin-bottom:1rem">
+    <span style="color:var(--qb-green)"><strong>{{ batch_stats.get('approved', 0) }}</strong> auto-approved</span>
+    <span style="color:var(--qb-accent-soft)"><strong>{{ batch_stats.get('pending_review', 0) }}</strong> to review</span>
+    <span style="color:var(--qb-red)"><strong>{{ batch_stats.get('rejected', 0) }}</strong> auto-rejected</span>
+    <span style="color:var(--qb-dim);font-size:0.72rem;margin-left:auto">Latest batch</span>
+</div>
+{% endif %}
+
+{% if posts %}
+<!-- Bulk actions -->
+<div class="action-buttons">
+    <button class="outline" hx-post="/api/posts/approve-all" hx-target="#post-list" hx-confirm="Approve all pending posts?">Approve All</button>
+    <button class="outline secondary" hx-post="/api/posts/reject-all" hx-target="#post-list" hx-confirm="Reject all pending posts?">Reject All</button>
+</div>
+
+<div id="post-list">
+    {% for post in posts %}
+    <div class="post-card" id="post-card-{{ post.id }}" {% if post.quality_score is not none and post.quality_score < 30 %}style="border-color:var(--qb-red)"{% endif %}>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.4rem">
+            <div class="post-content" id="post-content-{{ post.id }}" style="flex:1">{{ post.content }}</div>
+            {% if post.quality_score is not none %}
+            <span class="score-badge {% if post.quality_score >= 70 %}score-good{% elif post.quality_score >= 50 %}score-warn{% else %}score-bad{% endif %}">
+                {{ post.quality_score|round(0)|int }}
+            </span>
+            {% endif %}
+        </div>
+
+        <div class="post-meta">
+            <span class="badge badge-{{ post.post_type }}">{{ post.post_type }}</span>
+            {% set clen = post.content|length %}
+            <span class="{% if clen <= 260 %}chars-ok{% elif clen <= 280 %}chars-warn{% else %}chars-over{% endif %}">
+                {{ clen }} chars
+            </span>
+            {% if post.quality_score is not none %}
+            <span style="font-size:0.7rem;color:var(--qb-dim)">
+                AI:{{ post.ai_score|round(0)|int if post.ai_score is not none else '?' }}
+                Read:{{ post.readability_score|round(0)|int if post.readability_score is not none else '?' }}
+                Emoji:{{ post.emoji_score|round(0)|int if post.emoji_score is not none else '?' }}
+            </span>
+            {% endif %}
+            <span style="color:var(--qb-gray);font-size:0.8rem">Batch: {{ post.batch_id }}</span>
+        </div>
+
+        {% if post.score_details and post.score_details != '{}' %}
+        <details style="margin-top:0.3rem">
+            <summary>Score details</summary>
+            <div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.3rem">
+                {% set details = post.score_details|tojson|default('{}') %}
+                {% if post.score_details %}
+                    {% for penalty in (post.score_details|from_json).get('penalties', []) %}
+                    <span class="penalty-tag">{{ penalty }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </details>
+        {% endif %}
+
+        {% if post.has_image and post.image_url %}
+        <div style="margin:0.5rem 0">
+            <img src="{{ post.image_url }}" alt="Tweet image"
+                 style="max-width:100%;max-height:180px;border-radius:6px;object-fit:cover"
+                 onerror="this.style.display='none'">
+            <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.3rem">
+                <span class="badge" style="background:rgba(99,102,241,0.12);color:var(--qb-accent-soft)">IMG {{ post.image_score|round(0)|int if post.image_score else '?' }}</span>
+                <span style="font-size:0.65rem;color:var(--qb-dim)">via {{ post.image_source }}</span>
+                <button class="outline secondary" style="padding:0.15rem 0.4rem;font-size:0.65rem"
+                        hx-post="/api/posts/{{ post.id }}/remove-image"
+                        hx-target="#post-card-{{ post.id }}"
+                        hx-swap="outerHTML">Remove image</button>
+            </div>
+        </div>
+        {% elif not post.has_image %}
+        <div style="font-size:0.65rem;color:var(--qb-dim);margin:0.3rem 0">No image attached</div>
+        {% endif %}
+
+        {% if post.quality_score is not none and post.quality_score < 30 %}
+        <div style="margin-top:0.4rem;padding:0.3rem 0.5rem;background:rgba(248,113,113,0.1);border-radius:4px;font-size:0.72rem;color:var(--qb-red)">
+            Low quality score — consider rejecting or editing this tweet.
+        </div>
+        {% endif %}
+
+        <div class="post-actions">
+            <button class="outline" style="border-color:var(--qb-green);color:var(--qb-green)"
+                    hx-post="/api/posts/{{ post.id }}/approve"
+                    hx-target="#post-card-{{ post.id }}"
+                    hx-swap="outerHTML">Approve</button>
+            <button class="outline" style="border-color:var(--qb-red);color:var(--qb-red)"
+                    hx-post="/api/posts/{{ post.id }}/reject"
+                    hx-target="#post-card-{{ post.id }}"
+                    hx-swap="outerHTML">Reject</button>
+            <button class="outline"
+                    hx-get="/api/posts/{{ post.id }}/edit-form"
+                    hx-target="#post-card-{{ post.id }}"
+                    hx-swap="outerHTML">Edit</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% else %}
+<p>No posts pending review. Go to <a href="/">Dashboard</a> and click "Fetch & Generate".</p>
+{% endif %}
+{% endblock %}

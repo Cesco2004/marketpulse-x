@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ source_name }} - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>{{ source_name }}</h2>
+</div>
+
+<div style="margin-bottom:1.5rem;display:flex;gap:1.5rem;align-items:center">
+    <span class="badge" style="background:{{ source_info.color }}22;color:{{ source_info.color }};font-size:0.85rem;padding:0.3rem 0.8rem">
+        {{ source_info.icon|safe }} {{ source_info.label }}
+    </span>
+    <span style="font-size:0.85rem;color:var(--qb-dim)">{{ source_config.description }}</span>
+    <a href="{{ source_config.website }}" target="_blank" rel="noopener" style="font-size:0.85rem">Visit website</a>
+    <a href="/sources" style="font-size:0.85rem">&larr; All sources</a>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid" style="grid-template-columns:repeat(auto-fit, minmax(120px, 1fr))">
+    <div class="stat-card">
+        <div class="number">{{ articles|length }}</div>
+        <div class="label">Articles</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ articles|selectattr('stage', 'equalto', 'selected')|list|length }}</div>
+        <div class="label">Selected</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ "%.1f"|format(avg_score) }}</div>
+        <div class="label">Avg Score</div>
+    </div>
+</div>
+
+<!-- Articles list -->
+<div class="section-title">Articles ({{ articles|length }})</div>
+
+{% for article in articles %}
+<div class="post-card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem">
+        <div style="flex:1">
+            <a href="{{ article.url }}" target="_blank" rel="noopener" style="font-weight:600">
+                {{ article.title[:120] }}{% if article.title|length > 120 %}...{% endif %}
+            </a>
+            <div style="margin-top:0.3rem;display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap">
+                <span style="font-size:0.8rem;color:var(--qb-dim)">
+                    {{ article.fetched_at[:10] if article.fetched_at else 'Unknown date' }}
+                </span>
+                <span class="badge badge-{{ article.stage or 'fetched' }}">{{ article.stage or 'fetched' }}</span>
+                {% if article.llm_rank %}
+                <span style="font-size:0.8rem;color:var(--qb-accent-soft)">Rank #{{ article.llm_rank }}</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="score-bar">
+            <strong style="color:var(--qb-accent-soft)">{{ article.keyword_score or 0 }}</strong>
+            <div class="score-bar-track">
+                <div class="score-bar-fill" style="width:{{ ((article.keyword_score or 0) / 8 * 100)|int }}%"></div>
+            </div>
+        </div>
+    </div>
+
+    {% set kw = article.matched_keywords if article.matched_keywords else '[]' %}
+    {% set kw_list = kw|replace('[', '')|replace(']', '')|replace('"', '')|replace("'", "")|split(',') %}
+    {% if kw_list|select|list|length > 0 %}
+    <div style="margin-top:0.5rem">
+        {% for k in kw_list %}
+            {% if k.strip() %}
+            <span class="keyword-tag">{{ k.strip() }}</span>
+            {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if article.summary %}
+    <details style="margin-top:0.5rem">
+        <summary>Summary</summary>
+        <div class="article-detail">
+            <p>{{ article.summary[:500] }}</p>
+        </div>
+    </details>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% if not articles %}
+<p>No articles fetched from this source yet.</p>
+{% endif %}
+{% endblock %}

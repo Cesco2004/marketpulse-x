@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 --version)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 main.py)",
+      "Bash(python3 main.py fetch)",
+      "Bash(python3 main.py verify)",
+      "Bash(python3 main.py status)"
+    ]
+  }
+}

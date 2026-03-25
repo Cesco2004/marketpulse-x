@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Calendar - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Calendar</h2>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 300px;gap:1.5rem">
+
+<!-- Left: Calendar -->
+<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+        <a href="/calendar?year={{ prev_year }}&month={{ prev_month }}" role="button" class="outline" style="padding:0.2rem 0.5rem;font-size:0.72rem">&larr;</a>
+        <div style="text-align:center">
+            <div style="font-size:1rem;font-weight:700">{{ month_name }}</div>
+            <div style="font-size:0.65rem;color:var(--qb-dim)">
+                {{ total_posted }} published &middot; {{ total_approved }} queued &middot; {{ total_pending }} pending
+            </div>
+        </div>
+        <div style="display:flex;gap:0.25rem">
+            <a href="/calendar" role="button" class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.65rem">Today</a>
+            <a href="/calendar?year={{ next_year }}&month={{ next_month }}" role="button" class="outline" style="padding:0.2rem 0.5rem;font-size:0.72rem">&rarr;</a>
+        </div>
+    </div>
+
+    <div class="cal-grid">
+        {% for name in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
+        <div class="cal-header">{{ name }}</div>
+        {% endfor %}
+        {% for week in weeks %}
+            {% for day in week %}
+                {% if day %}
+                <a href="/calendar?year={{ year }}&month={{ month }}&date={{ day.date }}"
+                   class="cal-cell {% if day.is_today %}cal-today{% endif %} {% if day.date == selected_date %}cal-selected{% endif %}">
+                    <span class="cal-num">{{ day.num }}</span>
+                    {% if day.dot %}<span class="cal-dot cal-dot-{{ day.dot }}"></span>{% endif %}
+                    {% if day.count > 1 %}<span class="cal-count">{{ day.count }}</span>{% endif %}
+                </a>
+                {% else %}
+                <div class="cal-cell cal-empty"></div>
+                {% endif %}
+            {% endfor %}
+        {% endfor %}
+    </div>
+
+    <div style="display:flex;gap:0.8rem;font-size:0.65rem;color:var(--qb-dim);margin-bottom:1rem">
+        <span style="display:flex;align-items:center;gap:0.2rem"><span class="cal-dot cal-dot-green" style="position:static"></span> Published</span>
+        <span style="display:flex;align-items:center;gap:0.2rem"><span class="cal-dot cal-dot-accent" style="position:static"></span> Queued</span>
+        <span style="display:flex;align-items:center;gap:0.2rem"><span class="cal-dot cal-dot-red" style="position:static"></span> Pending</span>
+        <span style="margin-left:auto">{{ tz_label }}</span>
+    </div>
+
+    {% if selected_day_posts %}
+    <div class="section-title">{{ selected_day_label }}</div>
+    {% for post in selected_day_posts %}
+    <div class="post-card">
+        <div class="post-content">{{ post.content }}</div>
+        <div class="post-meta">
+            <span class="badge badge-{{ post.post_type }}">{{ post.post_type }}</span>
+            {% set clen = post.content|length %}
+            <span class="{% if clen <= 260 %}chars-ok{% elif clen <= 280 %}chars-warn{% else %}chars-over{% endif %}">{{ clen }}c</span>
+            {% if post.status == 'posted' %}
+                <span style="color:var(--qb-green)">Published {{ post.local_time }}</span>
+                {% if post.x_tweet_id %}<a href="https://x.com/QEdgeIntel/status/{{ post.x_tweet_id }}" target="_blank" style="font-size:0.72rem">View</a>{% endif %}
+            {% elif post.status == 'approved' %}
+                {% if post.local_time %}
+                <span style="color:var(--qb-accent-soft)">Scheduled {{ post.local_time }} {{ tz_label }}</span>
+                {% else %}
+                <span style="color:var(--qb-dim)">Queued &middot; start scheduler to assign time</span>
+                {% endif %}
+            {% else %}
+                <span style="color:var(--qb-dim)">{{ post.status }}</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% elif selected_date %}
+    <div class="section-title">{{ selected_day_label }}</div>
+    <p style="color:var(--qb-dim);font-size:0.78rem">No posts on this day.</p>
+    {% endif %}
+</div>
+
+<!-- Right: Schedule Settings -->
+<div>
+    <div class="post-card" style="position:sticky;top:1rem;margin-left:0.5rem">
+        <div class="section-title" style="margin-top:0">Schedule Settings</div>
+
+        <!-- Status + toggle (auto-refreshes every 30s) -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem"
+             id="sched-status" hx-get="/api/schedule/status" hx-trigger="every 30s" hx-swap="innerHTML">
+            <span style="font-size:0.75rem;{% if sched_running %}color:var(--qb-green){% else %}color:var(--qb-dim){% endif %}">
+                {% if sched_running %}Active{% if next_post %} &middot; next {{ next_post }}{% endif %}{% else %}Inactive{% endif %}
+            </span>
+            <span id="sched-toggle">
+                {% if sched_running %}
+                <button class="outline" style="font-size:0.72rem;padding:0.25rem 0.7rem;border-color:var(--qb-red);color:var(--qb-red)"
+                        hx-post="/api/schedule/toggle" hx-target="#sched-toggle" hx-swap="innerHTML">Stop</button>
+                {% else %}
+                <button class="btn-fetch" style="font-size:0.72rem;padding:0.25rem 0.7rem"
+                        hx-post="/api/schedule/toggle" hx-target="#sched-toggle" hx-swap="innerHTML">Start</button>
+                {% endif %}
+            </span>
+        </div>
+
+        {% if validation_error %}
+        <div style="color:var(--qb-red);font-size:0.7rem;padding:0.4rem;background:rgba(248,113,113,0.1);border-radius:4px;margin-bottom:0.75rem">
+            {{ validation_error }}
+        </div>
+        {% endif %}
+
+        <form hx-post="/api/schedule/save" hx-target="#save-result" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) setTimeout(function(){ window.location.reload(); }, 1000)">
+            <!-- Mode -->
+            <div style="margin-bottom:0.6rem">
+                <label style="font-size:0.72rem;display:flex;align-items:center;gap:0.35rem;cursor:pointer;margin-bottom:0.25rem">
+                    <input type="radio" name="mode" value="fixed" {% if schedule.mode == 'fixed' %}checked{% endif %}
+                           onclick="document.getElementById('fixed-opts').style.display='block';document.getElementById('random-opts').style.display='none'">
+                    Fixed interval
+                </label>
+                <label style="font-size:0.72rem;display:flex;align-items:center;gap:0.35rem;cursor:pointer">
+                    <input type="radio" name="mode" value="random" {% if schedule.mode == 'random' %}checked{% endif %}
+                           onclick="document.getElementById('random-opts').style.display='block';document.getElementById('fixed-opts').style.display='none'">
+                    Random daily
+                </label>
+            </div>
+
+            <!-- Fixed -->
+            <div id="fixed-opts" style="{% if schedule.mode != 'fixed' %}display:none{% endif %}">
+                <div style="font-size:0.65rem;color:var(--qb-dim);margin-bottom:0.3rem">Post every:</div>
+                <div style="display:flex;gap:0.25rem;align-items:center;margin-bottom:0.4rem">
+                    <input type="number" name="fixed_hours" value="{{ schedule.fixed_interval_hours }}" min="0" max="168"
+                           style="width:50px;padding:0.2rem 0.35rem;font-size:0.75rem">
+                    <span style="font-size:0.68rem;color:var(--qb-dim)">h</span>
+                    <input type="number" name="fixed_minutes" value="{{ schedule.fixed_interval_minutes }}" min="0" max="59"
+                           style="width:50px;padding:0.2rem 0.35rem;font-size:0.75rem">
+                    <span style="font-size:0.68rem;color:var(--qb-dim)">min</span>
+                </div>
+            </div>
+
+            <!-- Random -->
+            <div id="random-opts" style="{% if schedule.mode != 'random' %}display:none{% endif %}">
+                <!-- Tweets per day -->
+                <div style="margin-bottom:0.5rem">
+                    <div style="font-size:0.65rem;color:var(--qb-dim);margin-bottom:0.2rem">Tweets per day</div>
+                    <input type="number" name="tweets_per_day" value="{{ schedule.random_tweets_per_day }}" min="1" max="20"
+                           style="width:60px;padding:0.2rem 0.35rem;font-size:0.75rem">
+                </div>
+
+                <!-- Min gap -->
+                <div style="margin-bottom:0.5rem">
+                    <div style="font-size:0.65rem;color:var(--qb-dim);margin-bottom:0.2rem">Min gap between tweets</div>
+                    <div style="display:flex;gap:0.2rem;align-items:center">
+                        <input type="number" name="min_gap_h" value="{{ schedule.random_min_gap_hours|default(3) }}" min="0" max="23"
+                               style="width:45px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">h</span>
+                        <input type="number" name="min_gap_m" value="{{ schedule.random_min_gap_minutes|default(0) }}" min="0" max="59"
+                               style="width:45px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">min</span>
+                    </div>
+                </div>
+
+                <!-- Max gap -->
+                <div style="margin-bottom:0.5rem">
+                    <div style="font-size:0.65rem;color:var(--qb-dim);margin-bottom:0.2rem">Max gap between tweets</div>
+                    <div style="display:flex;gap:0.2rem;align-items:center">
+                        <input type="number" name="max_gap_h" value="{{ schedule.random_max_gap_hours|default(15) }}" min="0" max="23"
+                               style="width:45px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">h</span>
+                        <input type="number" name="max_gap_m" value="{{ schedule.random_max_gap_minutes|default(0) }}" min="0" max="59"
+                               style="width:45px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">min</span>
+                    </div>
+                </div>
+
+                <!-- Window -->
+                <div style="margin-bottom:0.5rem">
+                    <div style="font-size:0.65rem;color:var(--qb-dim);margin-bottom:0.2rem">Posting window ({{ tz_label }})</div>
+                    <div style="display:flex;gap:0.2rem;align-items:center">
+                        <input type="number" name="start_hour" value="{{ schedule.random_start_hour }}" min="0" max="23"
+                               style="width:40px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">:</span>
+                        <input type="number" name="start_minute" value="{{ schedule.random_start_minute|default(0) }}" min="0" max="59"
+                               style="width:40px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">&rarr;</span>
+                        <input type="number" name="end_hour" value="{{ schedule.random_end_hour }}" min="0" max="23"
+                               style="width:40px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                        <span style="font-size:0.65rem;color:var(--qb-dim)">:</span>
+                        <input type="number" name="end_minute" value="{{ schedule.random_end_minute|default(0) }}" min="0" max="59"
+                               style="width:40px;padding:0.2rem 0.3rem;font-size:0.75rem">
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-fetch" style="font-size:0.72rem;padding:0.25rem 0.7rem;width:100%;margin-top:0.3rem">Save & Start</button>
+            <div id="save-result"></div>
+        </form>
+    </div>
+</div>
+
+</div>
+{% endblock %}

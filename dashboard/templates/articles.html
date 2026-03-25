@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Articles - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Articles</h2>
+</div>
+
+<!-- Filter tabs -->
+<div class="filter-group">
+    <a href="/articles" role="button" class="{{ 'primary' if not filter else 'secondary outline' }}">All ({{ counts.all }})</a>
+    <a href="/articles?filter=prefiltered" role="button" class="{{ 'primary' if filter == 'prefiltered' else 'secondary outline' }}">Scored ({{ counts.prefiltered }})</a>
+    <a href="/articles?filter=selected" role="button" class="{{ 'primary' if filter == 'selected' else 'secondary outline' }}">Selected ({{ counts.selected }})</a>
+</div>
+
+{% for article in articles %}
+<div class="post-card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem">
+        <div style="flex:1">
+            <a href="{{ article.url }}" target="_blank" rel="noopener" style="font-weight:600;font-size:1rem">
+                {{ article.title[:100] }}{% if article.title|length > 100 %}...{% endif %}
+            </a>
+            <div style="margin-top:0.4rem;display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+                <span style="font-size:0.8rem;color:var(--qb-dim)">{{ article.source }}</span>
+                <span class="badge badge-{{ article.stage or 'fetched' }}">{{ article.stage or 'fetched' }}</span>
+                {% if article.llm_rank %}
+                <span style="font-size:0.8rem;color:var(--qb-accent-soft)">Mistral rank: #{{ article.llm_rank }}</span>
+                {% endif %}
+            </div>
+        </div>
+        <div style="text-align:right;min-width:80px">
+            <div class="score-bar">
+                <strong style="color:var(--qb-accent-soft)">{{ article.keyword_score or 0 }}</strong>
+                <div class="score-bar-track">
+                    <div class="score-bar-fill" style="width:{{ ((article.keyword_score or 0) / 8 * 100)|int }}%"></div>
+                </div>
+            </div>
+            <div style="margin-top:0.5rem">
+                {% if article.manual_override == 'include' %}
+                <button class="outline" style="padding:0.2rem 0.6rem;font-size:0.7rem;border-color:var(--qb-green);color:var(--qb-green)"
+                        hx-post="/api/articles/{{ article.id }}/clear-override" hx-target="closest .post-card" hx-swap="outerHTML">Included</button>
+                {% elif article.manual_override == 'exclude' %}
+                <button class="outline" style="padding:0.2rem 0.6rem;font-size:0.7rem;border-color:var(--qb-red);color:var(--qb-red)"
+                        hx-post="/api/articles/{{ article.id }}/clear-override" hx-target="closest .post-card" hx-swap="outerHTML">Excluded</button>
+                {% else %}
+                <div style="display:flex;gap:0.25rem">
+                    <button class="outline" style="padding:0.2rem 0.5rem;font-size:0.7rem"
+                            hx-post="/api/articles/{{ article.id }}/include" hx-target="closest .post-card" hx-swap="outerHTML">Include</button>
+                    <button class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.7rem"
+                            hx-post="/api/articles/{{ article.id }}/exclude" hx-target="closest .post-card" hx-swap="outerHTML">Exclude</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Keywords -->
+    {% set kw = article.matched_keywords if article.matched_keywords else '[]' %}
+    {% set kw_list = kw|replace('[', '')|replace(']', '')|replace('"', '')|replace("'", "")|split(',') %}
+    {% if kw_list|select|list|length > 0 %}
+    <div style="margin-top:0.6rem">
+        {% for k in kw_list %}
+            {% if k.strip() %}
+            <span class="keyword-tag">{{ k.strip() }}</span>
+            {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Expandable detail -->
+    <details style="margin-top:0.75rem">
+        <summary>Why this article?</summary>
+        <div class="article-detail">
+            {% if article.summary %}
+            <p><strong>Summary:</strong> {{ article.summary[:400] }}</p>
+            {% endif %}
+            <p><strong>Keyword score:</strong> {{ article.keyword_score or 0 }} points
+            {% set matched = kw|replace('[', '')|replace(']', '')|replace('"', '') %}
+            {% if matched and matched.strip() %}
+                &mdash; matched: {{ matched }}
+            {% else %}
+                &mdash; no keyword matches (source priority bonus only)
+            {% endif %}
+            </p>
+            {% if article.llm_rank %}
+            <p><strong>Mistral ranking:</strong> Ranked #{{ article.llm_rank }} out of the top 10 scored articles. This means Mistral considered it the {% if article.llm_rank == 1 %}most{% elif article.llm_rank == 2 %}second most{% elif article.llm_rank == 3 %}third most{% else %}#{{ article.llm_rank }} most{% endif %} relevant article for the audience.</p>
+            {% else %}
+            <p><strong>Mistral ranking:</strong> Not ranked (didn't make it to the top 10 scoring articles, or pipeline hasn't run yet).</p>
+            {% endif %}
+            <p><strong>Pipeline stage:</strong>
+            {% if article.stage == 'selected' %}
+                This article was selected for post generation.
+            {% elif article.stage == 'prefiltered' %}
+                This article passed keyword scoring but wasn't selected by Mistral.
+            {% elif article.stage == 'ranked' %}
+                This article was ranked by Mistral but didn't make the final cut.
+            {% else %}
+                This article was fetched but didn't score high enough for consideration.
+            {% endif %}
+            </p>
+        </div>
+    </details>
+</div>
+{% endfor %}
+
+{% if not articles %}
+<p>No articles found. Click "Fetch & Generate" on the <a href="/">Dashboard</a>.</p>
+{% endif %}
+{% endblock %}
