@@ -13,18 +13,31 @@ from limiter.alerts import send_alert_email
 bp = Blueprint("limits", __name__)
 
 
-@bp.route("/limits")
-def limits_page():
+def _get_alert_emails(limits):
+    """Parse alert_email field (comma-separated) into a list."""
+    raw = limits.get("alert_email", "")
+    if not raw:
+        return []
+    return [e.strip() for e in raw.split(",") if e.strip()]
+
+
+def _render_page(**extra):
     status = usage_limiter.get_status()
     limits = get_usage_limits()
     ks = get_kill_switch()
     alerts = get_recent_alerts(limit=15)
-    return render_template("limits.html", status=status, limits=limits, ks=ks, alerts=alerts)
+    alert_emails = _get_alert_emails(limits)
+    return render_template("limits.html", status=status, limits=limits, ks=ks,
+                           alerts=alerts, alert_emails=alert_emails, **extra)
 
 
-@bp.route("/api/limits/save", methods=["POST"])
+@bp.route("/limits")
+def limits_page():
+    return _render_page()
+
+
+@bp.route("/api/limits/save-limits", methods=["POST"])
 def save_limits():
-    # Handle comma as decimal separator (French locale)
     cost_str = request.form.get("mistral_max_cost_per_day", "1.00").replace(",", ".")
     update_usage_limits(
         mistral_max_tokens_per_day=int(request.form.get("mistral_max_tokens_per_day", 500000)),
@@ -33,22 +46,48 @@ def save_limits():
         x_max_tweets_per_day=int(request.form.get("x_max_tweets_per_day", 15)),
         x_max_replies_per_day=int(request.form.get("x_max_replies_per_day", 10)),
         warning_threshold_pct=int(request.form.get("warning_threshold_pct", 80)),
-        alert_email=request.form.get("alert_email", "").strip(),
+        max_consecutive_errors=int(request.form.get("max_consecutive_errors", 5)),
+    )
+    return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "API limits saved!", "type": "success"}}'}
+
+
+@bp.route("/api/limits/save-email", methods=["POST"])
+def save_email():
+    update_usage_limits(
         smtp_host=request.form.get("smtp_host", "smtp.gmail.com").strip(),
         smtp_port=int(request.form.get("smtp_port", 587)),
         smtp_user=request.form.get("smtp_user", "").strip(),
         smtp_password=request.form.get("smtp_password", "").strip(),
         alerts_enabled=1 if request.form.get("alerts_enabled") else 0,
         daily_summary_enabled=1 if request.form.get("daily_summary_enabled") else 0,
-        max_consecutive_errors=int(request.form.get("max_consecutive_errors", 5)),
     )
+    return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "Email settings saved!", "type": "success"}}'}
 
-    # Reload and re-render the full page with fresh data
-    status = usage_limiter.get_status()
+
+@bp.route("/api/limits/add-email", methods=["POST"])
+def add_email():
+    new_email = request.form.get("new_email", "").strip()
+    if not new_email:
+        return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "No email provided", "type": "error"}}'}
+
     limits = get_usage_limits()
-    ks = get_kill_switch()
-    alerts = get_recent_alerts(limit=15)
-    return render_template("limits.html", status=status, limits=limits, ks=ks, alerts=alerts, just_saved=True), 200, {"HX-Trigger": '{"showToast": {"message": "Configuration saved!", "type": "success"}}'}
+    emails = _get_alert_emails(limits)
+    if new_email in emails:
+        return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "Email already added", "type": "error"}}'}
+
+    emails.append(new_email)
+    update_usage_limits(alert_email=", ".join(emails))
+    return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "' + new_email + ' added!", "type": "success"}}'}
+
+
+@bp.route("/api/limits/remove-email", methods=["POST"])
+def remove_email():
+    email_to_remove = request.form.get("email", "").strip()
+    limits = get_usage_limits()
+    emails = _get_alert_emails(limits)
+    emails = [e for e in emails if e != email_to_remove]
+    update_usage_limits(alert_email=", ".join(emails))
+    return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "' + email_to_remove + ' removed", "type": "info"}}'}
 
 
 @bp.route("/api/kill-switch/toggle", methods=["POST"])
@@ -61,12 +100,7 @@ def toggle_kill_switch():
         reason = request.form.get("reason", "Dashboard toggle")
         set_kill_switch(True, reason=reason, killed_by="dashboard")
         msg = "Kill switch activated"
-
-    status = usage_limiter.get_status()
-    limits = get_usage_limits()
-    ks = get_kill_switch()
-    alerts = get_recent_alerts(limit=15)
-    return render_template("limits.html", status=status, limits=limits, ks=ks, alerts=alerts), 200, {"HX-Trigger": f'{{"showToast": {{"message": "{msg}", "type": "info"}}}}'}
+    return _render_page(), 200, {"HX-Trigger": f'{{"showToast": {{"message": "{msg}", "type": "info"}}}}'}
 
 
 @bp.route("/api/limits/test-email", methods=["POST"])
@@ -82,12 +116,10 @@ def test_email():
 def api_limits_status():
     """Return usage bars HTML fragment for HTMX auto-refresh."""
     status = usage_limiter.get_status()
-    bars = _render_bars(status)
-    return bars
+    return _render_bars(status)
 
 
 def _render_bars(s):
-    """Render usage progress bars as HTML fragment."""
     def bar(label, current, max_val, pct, fmt="{}"):
         color = "var(--green)" if pct < 60 else "var(--yellow)" if pct < 85 else "var(--red)"
         return (

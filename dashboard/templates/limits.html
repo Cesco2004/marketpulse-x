@@ -6,38 +6,39 @@
 
 <!-- Kill Switch Banner -->
 {% if ks.is_killed %}
-<div style="background:var(--red);color:white;padding:1rem 1.5rem;border-radius:8px;margin-bottom:1.5rem;display:flex;align-items:center;justify-content:space-between">
+<div class="kill-banner kill-active">
     <div>
         <strong>KILL SWITCH ACTIVE</strong>
         {% if ks.killed_reason %}<span style="opacity:0.9"> &mdash; {{ ks.killed_reason }}</span>{% endif %}
-        {% if ks.killed_at %}<br><small>Since {{ ks.killed_at }}</small>{% endif %}
+        {% if ks.killed_at %}<br><small style="opacity:0.7">Since {{ ks.killed_at }}</small>{% endif %}
     </div>
     <form hx-post="/api/kill-switch/toggle" hx-target="body">
-        <button type="submit" class="btn btn-sm" style="background:white;color:var(--red);border:none;font-weight:600">Resume Bot</button>
+        <button type="submit" class="btn btn-sm" style="background:#fff;color:var(--red)">Resume Bot</button>
     </form>
 </div>
 {% else %}
-<div style="background:var(--surface);border:1px solid var(--border);padding:1rem 1.5rem;border-radius:8px;margin-bottom:1.5rem;display:flex;align-items:center;justify-content:space-between">
+<div class="kill-banner kill-ok">
     <div>
-        <span style="color:var(--green);font-weight:600">Bot Active</span>
-        <span style="color:var(--text-secondary)"> &mdash; All API calls allowed</span>
+        <span class="status-dot dot-green"></span>
+        <strong>Bot Active</strong>
+        <span class="text-muted"> &mdash; All API calls allowed</span>
     </div>
     <form hx-post="/api/kill-switch/toggle" hx-target="body" style="display:flex;gap:0.5rem;align-items:center">
-        <input type="text" name="reason" placeholder="Reason (optional)" style="font-size:0.8rem;padding:0.3rem 0.6rem;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
-        <button type="submit" class="btn btn-sm" style="background:var(--red);color:white;border:none;font-weight:600">Kill</button>
+        <input type="text" name="reason" placeholder="Reason (optional)" class="input-field input-sm">
+        <button type="submit" class="btn btn-sm btn-danger">Kill</button>
     </form>
 </div>
 {% endif %}
 
 <!-- Usage Progress Bars -->
-<div class="card" style="margin-bottom:1.5rem">
+<div class="card" style="margin-bottom:1rem">
     <h3>Today's Usage</h3>
     <div id="usage-bars" hx-get="/api/limits/status" hx-trigger="every 30s">
         {% macro bar(label, current, max_val, pct, fmt_current, fmt_max) %}
         <div class="limit-bar">
             <div class="limit-label">
                 <span>{{ label }}</span>
-                <span>{{ fmt_current }} / {{ fmt_max }}</span>
+                <span class="text-muted">{{ fmt_current }} / {{ fmt_max }}</span>
             </div>
             <div class="progress-track">
                 <div class="progress-fill" style="width:{{ [pct, 100]|min }}%;background:{% if pct < 60 %}var(--green){% elif pct < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
@@ -53,108 +54,134 @@
     </div>
 
     {% if status.consecutive_errors > 0 %}
-    <div style="margin-top:1rem;padding:0.5rem 0.75rem;background:rgba(255,100,100,0.1);border-radius:6px;font-size:0.85rem">
+    <div class="error-badge">
         Consecutive errors: <strong>{{ status.consecutive_errors }}</strong>
     </div>
     {% endif %}
 </div>
 
-<!-- Limits Configuration -->
-<div class="card" style="margin-bottom:1.5rem">
-    <h3>Limits Configuration</h3>
-    <form hx-post="/api/limits/save" hx-target="body">
-        <div class="form-grid">
+<!-- API Limits Configuration -->
+<div class="card" style="margin-bottom:1rem">
+    <h3>API Limits</h3>
+    <form hx-post="/api/limits/save-limits" hx-target="body">
+        <div class="limits-form-grid">
             <div class="form-group">
                 <label>Mistral max calls/day</label>
-                <input type="number" name="mistral_max_calls_per_day" value="{{ limits.mistral_max_calls_per_day }}" min="1">
+                <input type="number" name="mistral_max_calls_per_day" value="{{ limits.mistral_max_calls_per_day }}" min="1" class="input-field">
             </div>
             <div class="form-group">
                 <label>Mistral max tokens/day</label>
-                <input type="number" name="mistral_max_tokens_per_day" value="{{ limits.mistral_max_tokens_per_day }}" min="1000" step="1000">
+                <input type="number" name="mistral_max_tokens_per_day" value="{{ limits.mistral_max_tokens_per_day }}" min="1000" step="1000" class="input-field">
             </div>
             <div class="form-group">
                 <label>Mistral max cost/day ($)</label>
-                <input type="text" inputmode="decimal" name="mistral_max_cost_per_day" value="{{ '%.2f'|format(limits.mistral_max_cost_per_day) }}" placeholder="1.00">
+                <input type="text" inputmode="decimal" name="mistral_max_cost_per_day" value="{{ '%.2f'|format(limits.mistral_max_cost_per_day) }}" placeholder="1.00" class="input-field">
             </div>
             <div class="form-group">
                 <label>Max tweets/day</label>
-                <input type="number" name="x_max_tweets_per_day" value="{{ limits.x_max_tweets_per_day }}" min="1">
+                <input type="number" name="x_max_tweets_per_day" value="{{ limits.x_max_tweets_per_day }}" min="1" class="input-field">
             </div>
             <div class="form-group">
                 <label>Max replies/day</label>
-                <input type="number" name="x_max_replies_per_day" value="{{ limits.x_max_replies_per_day }}" min="1">
+                <input type="number" name="x_max_replies_per_day" value="{{ limits.x_max_replies_per_day }}" min="1" class="input-field">
             </div>
             <div class="form-group">
                 <label>Warning threshold (%)</label>
-                <input type="number" name="warning_threshold_pct" value="{{ limits.warning_threshold_pct }}" min="50" max="100">
+                <input type="number" name="warning_threshold_pct" value="{{ limits.warning_threshold_pct }}" min="50" max="100" class="input-field">
             </div>
             <div class="form-group">
                 <label>Max consecutive errors</label>
-                <input type="number" name="max_consecutive_errors" value="{{ limits.max_consecutive_errors }}" min="1">
+                <input type="number" name="max_consecutive_errors" value="{{ limits.max_consecutive_errors }}" min="1" class="input-field">
             </div>
         </div>
-
-        <h4 style="margin-top:1.5rem">Email Alerts</h4>
-
-        <!-- Active email config summary -->
-        {% if limits.alerts_enabled and limits.alert_email %}
-        <div class="email-status email-status-on">
-            <div>
-                <strong>Alerts active</strong> &rarr; <strong>{{ limits.alert_email }}</strong>
-                <span style="opacity:0.7;margin-left:0.5rem">via {{ limits.smtp_user or '(no sender)' }}</span>
-            </div>
-            <div style="font-size:0.78rem;margin-top:0.25rem;opacity:0.8">
-                {% if limits.daily_summary_enabled %}Daily summary + {% endif %}Warning at {{ limits.warning_threshold_pct }}% + Alert when limit reached
-            </div>
+        <div style="margin-top:1rem">
+            <button type="submit" class="btn btn-primary">Save Limits</button>
         </div>
-        {% elif limits.alerts_enabled and not limits.alert_email %}
-        <div class="email-status email-status-warn">
-            Alerts enabled but <strong>no email configured</strong> &mdash; fill in the fields below
-        </div>
-        {% else %}
-        <div class="email-status email-status-off">
-            Email alerts disabled &mdash; enable below to get notified when limits are approached
-        </div>
-        {% endif %}
+    </form>
+</div>
 
-        <div class="form-grid">
+<!-- Email Alerts Configuration -->
+<div class="card" style="margin-bottom:1rem">
+    <h3>Email Alerts</h3>
+
+    <!-- Status summary -->
+    {% if limits.alerts_enabled and alert_emails %}
+    <div class="status-banner status-green">
+        <strong>Alerts active</strong> &rarr; {{ alert_emails|length }} recipient{{ 's' if alert_emails|length > 1 else '' }}
+        <span class="text-muted" style="margin-left:0.25rem">
+            ({% if limits.daily_summary_enabled %}daily summary + {% endif %}warnings + limit alerts)
+        </span>
+    </div>
+    {% elif limits.alerts_enabled and not alert_emails %}
+    <div class="status-banner status-yellow">
+        Alerts enabled but <strong>no recipients</strong> &mdash; add at least one email below
+    </div>
+    {% else %}
+    <div class="status-banner status-muted">
+        Email alerts disabled
+    </div>
+    {% endif %}
+
+    <!-- Recipients table -->
+    <h4>Recipients</h4>
+    <table class="limits-table">
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th style="width:80px"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for email in alert_emails %}
+            <tr>
+                <td>{{ email }}</td>
+                <td>
+                    <button class="btn btn-xs btn-outline" style="color:var(--red);border-color:var(--red)" hx-post="/api/limits/remove-email" hx-vals='{"email": "{{ email }}"}' hx-target="body" hx-confirm="Remove {{ email }}?">Remove</button>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not alert_emails %}
+            <tr>
+                <td colspan="2" class="text-muted" style="font-style:italic">No recipients configured</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    <form hx-post="/api/limits/add-email" hx-target="body" class="add-email-row">
+        <input type="email" name="new_email" placeholder="Add email address" required class="input-field" style="flex:1">
+        <button type="submit" class="btn btn-outline">Add</button>
+    </form>
+
+    <!-- SMTP settings -->
+    <h4 style="margin-top:1.25rem">SMTP & Notification Settings</h4>
+    <form hx-post="/api/limits/save-email" hx-target="body">
+        <div class="limits-form-grid">
             <div class="form-group" style="grid-column:span 2">
-                <label>
-                    <input type="checkbox" name="alerts_enabled" {% if limits.alerts_enabled %}checked{% endif %}>
-                    Enable email alerts
-                </label>
+                <label><input type="checkbox" name="alerts_enabled" {% if limits.alerts_enabled %}checked{% endif %}> Enable email alerts</label>
             </div>
             <div class="form-group" style="grid-column:span 2">
-                <label>
-                    <input type="checkbox" name="daily_summary_enabled" {% if limits.daily_summary_enabled %}checked{% endif %}>
-                    Send daily summary
-                </label>
-            </div>
-            <div class="form-group">
-                <label>Alert email</label>
-                <input type="email" name="alert_email" value="{{ limits.alert_email or '' }}" placeholder="you@example.com">
+                <label><input type="checkbox" name="daily_summary_enabled" {% if limits.daily_summary_enabled %}checked{% endif %}> Send daily summary</label>
             </div>
             <div class="form-group">
                 <label>SMTP host</label>
-                <input type="text" name="smtp_host" value="{{ limits.smtp_host or 'smtp.gmail.com' }}">
+                <input type="text" name="smtp_host" value="{{ limits.smtp_host or 'smtp.gmail.com' }}" class="input-field">
             </div>
             <div class="form-group">
                 <label>SMTP port</label>
-                <input type="number" name="smtp_port" value="{{ limits.smtp_port or 587 }}">
+                <input type="number" name="smtp_port" value="{{ limits.smtp_port or 587 }}" class="input-field">
             </div>
             <div class="form-group">
                 <label>SMTP user (sender)</label>
-                <input type="text" name="smtp_user" value="{{ limits.smtp_user or '' }}" placeholder="your-email@gmail.com">
+                <input type="text" name="smtp_user" value="{{ limits.smtp_user or '' }}" placeholder="your-email@gmail.com" class="input-field">
             </div>
             <div class="form-group">
                 <label>SMTP password (app password)</label>
-                <input type="password" name="smtp_password" value="{{ limits.smtp_password or '' }}" placeholder="Google app password">
+                <input type="password" name="smtp_password" value="{{ limits.smtp_password or '' }}" placeholder="Google app password" class="input-field">
             </div>
         </div>
-
-        <div style="margin-top:1.5rem;display:flex;gap:0.75rem">
-            <button type="submit" class="btn btn-primary">Save</button>
-            <button type="button" class="btn btn-secondary" hx-post="/api/limits/test-email" hx-swap="none">Send Test Email</button>
+        <div style="margin-top:1rem;display:flex;gap:0.5rem">
+            <button type="submit" class="btn btn-primary">Save Email Settings</button>
+            <button type="button" class="btn btn-outline" hx-post="/api/limits/test-email" hx-swap="none">Send Test Email</button>
         </div>
     </form>
 </div>
@@ -163,7 +190,7 @@
 <div class="card">
     <h3>Recent Alerts</h3>
     {% if alerts %}
-    <table class="data-table">
+    <table class="limits-table">
         <thead>
             <tr>
                 <th>Time</th>
@@ -174,44 +201,128 @@
         <tbody>
             {% for alert in alerts %}
             <tr>
-                <td style="white-space:nowrap;font-size:0.8rem">{{ alert.sent_at }}</td>
-                <td><span class="badge">{{ alert.alert_type }}</span></td>
-                <td style="font-size:0.85rem">{{ alert.message }}</td>
+                <td style="white-space:nowrap">{{ alert.sent_at }}</td>
+                <td><span class="tag">{{ alert.alert_type }}</span></td>
+                <td>{{ alert.message }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p style="color:var(--text-tertiary);font-style:italic">No alerts sent yet.</p>
+    <p class="text-muted" style="font-style:italic">No alerts sent yet.</p>
     {% endif %}
 </div>
 
 <style>
-.limit-bar { margin-bottom: 0.75rem; }
-.limit-label { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 0.25rem; }
-.progress-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
-.progress-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.form-group label { display: block; font-size: 0.82rem; margin-bottom: 0.25rem; color: var(--text-secondary); }
-.form-group input[type="number"],
-.form-group input[type="text"],
-.form-group input[type="email"],
-.form-group input[type="password"] {
-    width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border);
-    border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;
+/* ─── Limits page (uses dashboard design tokens) ─── */
+
+.text-muted { color: var(--text-secondary); }
+
+/* Kill switch banners */
+.kill-banner {
+    padding: 0.85rem 1.25rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.88rem;
 }
-.form-group input[type="checkbox"] { margin-right: 0.5rem; }
-.btn { padding: 0.5rem 1.2rem; border-radius: 6px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border); }
-.btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
-.btn-secondary { background: var(--surface); color: var(--text); }
-.btn-sm { padding: 0.3rem 0.8rem; font-size: 0.78rem; }
-.badge { background: var(--surface-hover); padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
-.data-table { width: 100%; border-collapse: collapse; }
-.data-table th, .data-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
-.data-table th { font-size: 0.75rem; text-transform: uppercase; color: var(--text-tertiary); }
-.email-status { padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.85rem; margin-bottom: 1rem; }
-.email-status-on { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); }
-.email-status-warn { background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.3); }
-.email-status-off { background: var(--surface); border: 1px solid var(--border); color: var(--text-tertiary); }
+.kill-active { background: var(--red-soft); border: 1px solid var(--red); color: var(--text-primary); }
+.kill-ok { background: var(--bg-secondary); border: 1px solid var(--border-color); }
+
+/* Status dot */
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.4rem; vertical-align: middle; }
+.dot-green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+/* Status banners */
+.status-banner {
+    padding: 0.6rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    margin-bottom: 0.75rem;
+}
+.status-green { background: var(--green-soft); border: 1px solid rgba(0,186,124,0.25); }
+.status-yellow { background: var(--yellow-soft); border: 1px solid rgba(255,212,0,0.25); }
+.status-muted { background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-tertiary); }
+
+/* Error badge */
+.error-badge {
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--red-soft);
+    border-radius: 8px;
+    font-size: 0.82rem;
+}
+
+/* Progress bars */
+.limit-bar { margin-bottom: 0.6rem; }
+.limit-label { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.2rem; }
+.progress-track { height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+
+/* Form grid */
+.limits-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
+.form-group label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 500;
+    margin-bottom: 0.2rem;
+    color: var(--text-secondary);
+}
+.form-group input[type="checkbox"] { margin-right: 0.4rem; }
+
+/* Input fields */
+.input-field {
+    width: 100%;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-family: inherit;
+    transition: border-color 0.15s;
+}
+.input-field:focus { border-color: var(--accent); outline: none; }
+.input-sm { font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+
+/* Tables */
+.limits-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.limits-table th {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-tertiary);
+    font-weight: 600;
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+.limits-table td {
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+.limits-table tr:last-child td { border-bottom: none; }
+
+/* Tag */
+.tag {
+    display: inline-block;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    padding: 0.1rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+/* Add email row */
+.add-email-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
 </style>
 {% endblock %}

@@ -18,14 +18,19 @@ def _get_smtp_config():
 
 
 def send_alert_email(subject, body):
-    """Send an email via SMTP. Returns True on success."""
+    """Send an email via SMTP to all recipients. Returns True on success."""
     cfg = _get_smtp_config()
     if not cfg["enabled"] or not cfg["to"] or not cfg["user"] or not cfg["password"]:
         return False
 
+    # Support multiple recipients (comma-separated)
+    recipients = [e.strip() for e in cfg["to"].split(",") if e.strip()]
+    if not recipients:
+        return False
+
     msg = MIMEMultipart()
     msg["From"] = cfg["user"]
-    msg["To"] = cfg["to"]
+    msg["To"] = ", ".join(recipients)
     msg["Subject"] = f"[Quantum Brief] {subject}"
     msg.attach(MIMEText(body, "plain"))
 
@@ -33,7 +38,7 @@ def send_alert_email(subject, body):
         with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
             server.starttls()
             server.login(cfg["user"], cfg["password"])
-            server.send_message(msg)
+            server.sendmail(cfg["user"], recipients, msg.as_string())
         return True
     except Exception as e:
         print(f"[Alerts] Failed to send email: {e}")
