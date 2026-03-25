@@ -10,6 +10,8 @@ from storage.database import (
     increment_consecutive_errors,
     reset_consecutive_errors,
     was_alert_sent_today,
+    get_monthly_usage,
+    get_monthly_budget,
 )
 from limiter.alerts import send_usage_warning, send_limit_reached, send_error_alert
 
@@ -28,6 +30,23 @@ class UsageLimiter:
         killed, reason = self._check_kill_switch()
         if killed:
             return False, reason
+
+        # Monthly budget check
+        monthly = get_monthly_usage("mistral")
+        budget = get_monthly_budget()
+        monthly_limit = budget.get("mistral_monthly_token_limit", 1000000)
+        if monthly_limit > 0 and monthly.get("total_tokens", 0) >= monthly_limit:
+            reason = f"Monthly Mistral token limit reached ({monthly['total_tokens']:,}/{monthly_limit:,})"
+            self._alert_limit_reached("mistral_monthly", reason)
+            return False, reason
+
+        # Monthly budget warning
+        if monthly_limit > 0:
+            monthly_pct = monthly.get("total_tokens", 0) / monthly_limit * 100
+            alert_threshold = budget.get("budget_alert_threshold_pct", 75)
+            if monthly_pct >= alert_threshold and not was_alert_sent_today("warning_mistral_monthly"):
+                send_usage_warning("Mistral (monthly)", monthly_pct,
+                                   f"Tokens: {monthly['total_tokens']:,}/{monthly_limit:,} ({monthly_pct:.0f}%)")
 
         limits = get_usage_limits()
         usage = get_daily_usage("mistral")
@@ -59,6 +78,25 @@ class UsageLimiter:
         # Warning threshold check
         self._check_warning("mistral", limits, current_calls, max_calls,
                             current_tokens, max_tokens, current_cost, max_cost)
+
+        return True, ""
+
+    def check_groq(self):
+        """Check if a Groq API call is allowed.
+        Returns (allowed: bool, reason: str).
+        """
+        killed, reason = self._check_kill_switch()
+        if killed:
+            return False, reason
+
+        # Monthly budget check
+        monthly = get_monthly_usage("groq")
+        budget = get_monthly_budget()
+        monthly_limit = budget.get("groq_monthly_token_limit", 1500000)
+        if monthly_limit > 0 and monthly.get("total_tokens", 0) >= monthly_limit:
+            reason = f"Monthly Groq token limit reached ({monthly['total_tokens']:,}/{monthly_limit:,})"
+            self._alert_limit_reached("groq_monthly", reason)
+            return False, reason
 
         return True, ""
 
@@ -131,9 +169,11 @@ class UsageLimiter:
         """Return current usage status for dashboard display."""
         limits = get_usage_limits()
         mistral = get_daily_usage("mistral")
+        groq = get_daily_usage("groq")
         tweet_count = get_daily_tweet_count()
         reply_count = get_daily_reply_count()
         ks = get_kill_switch()
+        budget = get_monthly_budget()
 
         max_calls = limits.get("mistral_max_calls_per_day", 50)
         max_tokens = limits.get("mistral_max_tokens_per_day", 500000)
@@ -141,10 +181,17 @@ class UsageLimiter:
         max_tweets = limits.get("x_max_tweets_per_day", 15)
         max_replies = limits.get("x_max_replies_per_day", 10)
 
+        # Monthly data
+        mistral_monthly = get_monthly_usage("mistral")
+        groq_monthly = get_monthly_usage("groq")
+        mistral_monthly_limit = budget.get("mistral_monthly_token_limit", 1000000)
+        groq_monthly_limit = budget.get("groq_monthly_token_limit", 1500000)
+
         return {
             "kill_switch": bool(ks.get("is_killed")),
             "kill_reason": ks.get("killed_reason", ""),
             "kill_file_exists": os.path.exists(_KILL_FILE),
+            # Mistral daily
             "mistral_calls": mistral.get("calls", 0),
             "mistral_calls_max": max_calls,
             "mistral_calls_pct": min(100, (mistral.get("calls", 0) / max_calls * 100)) if max_calls else 0,
@@ -154,6 +201,10 @@ class UsageLimiter:
             "mistral_cost": mistral.get("total_cost", 0),
             "mistral_cost_max": max_cost,
             "mistral_cost_pct": min(100, (mistral.get("total_cost", 0) / max_cost * 100)) if max_cost else 0,
+            # Groq daily
+            "groq_calls": groq.get("calls", 0),
+            "groq_tokens": groq.get("total_tokens", 0),
+            # X/Twitter daily
             "x_tweets": tweet_count,
             "x_tweets_max": max_tweets,
             "x_tweets_pct": min(100, (tweet_count / max_tweets * 100)) if max_tweets else 0,
@@ -162,6 +213,14 @@ class UsageLimiter:
             "x_replies_pct": min(100, (reply_count / max_replies * 100)) if max_replies else 0,
             "consecutive_errors": limits.get("current_consecutive_errors", 0),
             "limits": limits,
+            # Monthly budget data
+            "mistral_monthly_tokens": mistral_monthly.get("total_tokens", 0),
+            "mistral_monthly_limit": mistral_monthly_limit,
+            "mistral_monthly_pct": min(100, (mistral_monthly.get("total_tokens", 0) / mistral_monthly_limit * 100)) if mistral_monthly_limit else 0,
+            "groq_monthly_tokens": groq_monthly.get("total_tokens", 0),
+            "groq_monthly_limit": groq_monthly_limit,
+            "groq_monthly_pct": min(100, (groq_monthly.get("total_tokens", 0) / groq_monthly_limit * 100)) if groq_monthly_limit else 0,
+            "budget": budget,
         }
 
     def _check_kill_switch(self):

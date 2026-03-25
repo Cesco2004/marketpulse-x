@@ -301,6 +301,21 @@ def init_db():
         )
     """)
 
+    # --- Monthly budget (singleton) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS monthly_budget (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            mistral_monthly_token_limit INTEGER DEFAULT 1000000,
+            groq_monthly_token_limit INTEGER DEFAULT 1500000,
+            auto_throttle_enabled INTEGER DEFAULT 1,
+            throttle_start_pct INTEGER DEFAULT 70,
+            throttle_medium_pct INTEGER DEFAULT 85,
+            emergency_stop_pct INTEGER DEFAULT 95,
+            budget_alert_threshold_pct INTEGER DEFAULT 75,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Insert default configs if empty
     cursor.execute("INSERT OR IGNORE INTO schedule_config (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO quality_config (id) VALUES (1)")
@@ -309,6 +324,7 @@ def init_db():
     cursor.execute("INSERT OR IGNORE INTO usage_limits (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO kill_switch (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO analytics_config (id) VALUES (1)")
+    cursor.execute("INSERT OR IGNORE INTO monthly_budget (id) VALUES (1)")
 
     # Seed topic categories
     default_categories = [
@@ -630,31 +646,33 @@ def get_api_usage_summary():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Mistral usage
-    cursor.execute("""
-        SELECT COUNT(*) as calls,
-               COALESCE(SUM(tokens_input), 0) as input_tokens,
-               COALESCE(SUM(tokens_output), 0) as output_tokens,
-               COALESCE(SUM(cost_estimate), 0) as total_cost
-        FROM api_usage WHERE service = 'mistral'
-    """)
-    row = cursor.fetchone()
-    mistral = {
-        "calls": row["calls"],
-        "input_tokens": row["input_tokens"],
-        "output_tokens": row["output_tokens"],
-        "total_tokens": row["input_tokens"] + row["output_tokens"],
-        "cost": row["total_cost"],
-    }
+    def _query_service(service, daily=False):
+        date_filter = "AND DATE(created_at) = DATE('now')" if daily else ""
+        cursor.execute(f"""
+            SELECT COUNT(*) as calls,
+                   COALESCE(SUM(tokens_input), 0) as input_tokens,
+                   COALESCE(SUM(tokens_output), 0) as output_tokens,
+                   COALESCE(SUM(cost_estimate), 0) as total_cost
+            FROM api_usage WHERE service = ? {date_filter}
+        """, (service,))
+        row = cursor.fetchone()
+        return {
+            "calls": row["calls"],
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "total_tokens": row["input_tokens"] + row["output_tokens"],
+            "cost": row["total_cost"],
+        }
 
-    # X/Twitter usage
-    cursor.execute("""
-        SELECT COUNT(*) as calls,
-               COALESCE(SUM(cost_estimate), 0) as total_cost
-        FROM api_usage WHERE service = 'x'
-    """)
-    row = cursor.fetchone()
-    x = {"calls": row["calls"], "cost": row["total_cost"]}
+    # All-time totals
+    mistral = _query_service("mistral")
+    groq = _query_service("groq")
+    x = _query_service("x")
+
+    # Today's usage
+    mistral_today = _query_service("mistral", daily=True)
+    groq_today = _query_service("groq", daily=True)
+    x_today = _query_service("x", daily=True)
 
     # Recent usage log
     cursor.execute("""
@@ -664,13 +682,25 @@ def get_api_usage_summary():
 
     conn.close()
     return {
+        # All-time
         "mistral_calls": mistral["calls"],
         "mistral_tokens_input": mistral["input_tokens"],
         "mistral_tokens_output": mistral["output_tokens"],
         "mistral_tokens_total": mistral["total_tokens"],
         "mistral_cost": mistral["cost"],
+        "groq_calls": groq["calls"],
+        "groq_tokens_total": groq["total_tokens"],
+        "groq_cost": groq["cost"],
         "x_posts": x["calls"],
         "x_cost": x["cost"],
+        # Today
+        "mistral_today_calls": mistral_today["calls"],
+        "mistral_today_tokens": mistral_today["total_tokens"],
+        "mistral_today_cost": mistral_today["cost"],
+        "groq_today_calls": groq_today["calls"],
+        "groq_today_tokens": groq_today["total_tokens"],
+        "x_today_posts": x_today["calls"],
+        "x_today_cost": x_today["cost"],
         "recent": recent,
     }
 
@@ -1326,6 +1356,122 @@ def get_daily_reply_count():
     count = cursor.fetchone()["count"]
     conn.close()
     return count
+
+
+# --- Monthly Usage ---
+
+def get_monthly_usage(service, year=None, month=None):
+    """Get current month's API usage for a service."""
+    now = datetime.utcnow()
+    y = str(year or now.year)
+    m = f"{(month or now.month):02d}"
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) as calls,
+               COALESCE(SUM(tokens_input + tokens_output), 0) as total_tokens,
+               COALESCE(SUM(tokens_input), 0) as total_input,
+               COALESCE(SUM(tokens_output), 0) as total_output,
+               COALESCE(SUM(cost_estimate), 0) as total_cost
+        FROM api_usage
+        WHERE service = ?
+          AND strftime('%Y', created_at) = ?
+          AND strftime('%m', created_at) = ?
+    """, (service, y, m))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else {"calls": 0, "total_tokens": 0, "total_input": 0, "total_output": 0, "total_cost": 0}
+
+
+def get_monthly_usage_by_day(service, year=None, month=None):
+    """Get day-by-day usage breakdown for the current month."""
+    now = datetime.utcnow()
+    y = str(year or now.year)
+    m = f"{(month or now.month):02d}"
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DATE(created_at) as date,
+               COUNT(*) as calls,
+               COALESCE(SUM(tokens_input + tokens_output), 0) as total_tokens,
+               COALESCE(SUM(cost_estimate), 0) as total_cost
+        FROM api_usage
+        WHERE service = ?
+          AND strftime('%Y', created_at) = ?
+          AND strftime('%m', created_at) = ?
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+    """, (service, y, m))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_monthly_usage_by_endpoint(service, year=None, month=None):
+    """Get token usage breakdown by endpoint for the current month."""
+    now = datetime.utcnow()
+    y = str(year or now.year)
+    m = f"{(month or now.month):02d}"
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT endpoint,
+               COUNT(*) as calls,
+               COALESCE(SUM(tokens_input + tokens_output), 0) as total_tokens,
+               COALESCE(SUM(cost_estimate), 0) as total_cost
+        FROM api_usage
+        WHERE service = ?
+          AND strftime('%Y', created_at) = ?
+          AND strftime('%m', created_at) = ?
+        GROUP BY endpoint
+        ORDER BY total_tokens DESC
+    """, (service, y, m))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Monthly Budget ---
+
+def get_monthly_budget():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM monthly_budget WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {
+        "mistral_monthly_token_limit": 1000000,
+        "groq_monthly_token_limit": 1500000,
+        "auto_throttle_enabled": 1,
+        "throttle_start_pct": 70,
+        "throttle_medium_pct": 85,
+        "emergency_stop_pct": 95,
+        "budget_alert_threshold_pct": 75,
+    }
+
+
+def update_monthly_budget(**kwargs):
+    conn = get_connection()
+    cursor = conn.cursor()
+    allowed = [
+        "mistral_monthly_token_limit", "groq_monthly_token_limit",
+        "auto_throttle_enabled", "throttle_start_pct", "throttle_medium_pct",
+        "emergency_stop_pct", "budget_alert_threshold_pct",
+    ]
+    sets = []
+    values = []
+    for key, val in kwargs.items():
+        if key in allowed:
+            sets.append(f"{key} = ?")
+            values.append(val)
+    if sets:
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE monthly_budget SET {', '.join(sets)} WHERE id = 1"
+        cursor.execute(query, values)
+        conn.commit()
+    conn.close()
 
 
 # --- Kill Switch ---

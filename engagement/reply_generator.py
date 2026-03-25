@@ -56,7 +56,7 @@ _TOXIC_KEYWORDS_SET = set(_TOXIC_KEYWORDS)
 _TOXIC_PATTERNS_COMPILED = [re.compile(p, re.IGNORECASE) for p in _TOXIC_PATTERNS]
 
 
-def check_toxicity(text):
+def check_toxicity(text, skip_llm=False):
     """Check if text contains toxic/discriminatory content.
 
     Returns dict with:
@@ -64,9 +64,9 @@ def check_toxicity(text):
       - reason: str (explanation if toxic)
       - method: 'keyword' | 'pattern' | 'llm' | None
 
-    Uses a two-layer approach:
+    Uses a multi-layer approach:
       1. Fast keyword/pattern matching (instant, no API cost)
-      2. LLM moderation check via Mistral (catches subtle cases)
+      2. LLM moderation check (catches subtle cases) - skipped if skip_llm=True
     """
     text_lower = text.lower()
 
@@ -100,40 +100,40 @@ def check_toxicity(text):
             }
 
     # Layer 3: LLM moderation (catches nuanced / context-dependent toxicity)
-    try:
-        result = _llm_moderation_check(text)
-        if result["is_toxic"]:
-            return result
-    except Exception:
-        pass  # If LLM check fails, let it through (keyword/pattern already passed)
+    if not skip_llm:
+        try:
+            result = _llm_moderation_check(text)
+            if result["is_toxic"]:
+                return result
+        except Exception:
+            pass  # If LLM check fails, let it through (keyword/pattern already passed)
 
     return {"is_toxic": False, "reason": None, "method": None}
 
 
 def _llm_moderation_check(text):
-    """Use Mistral to detect subtle toxicity that keywords miss."""
+    """Use LLM to detect subtle toxicity that keywords miss.
+
+    Routes to Groq (free) when available, falls back to Mistral.
+    """
+    # Try the provider router first (prefers Groq for moderation)
+    try:
+        from generator.provider_router import moderation_check
+        return moderation_check(text)
+    except (ImportError, RuntimeError):
+        pass
+
+    # Direct Mistral fallback
     allowed, _ = usage_limiter.check_mistral()
     if not allowed:
         return {"is_toxic": False, "reason": None, "method": None}
 
     client = _get_client()
-    prompt = f"""You are a content moderation system. Analyze the following text and determine if it contains any form of:
-- Racism or racial discrimination
-- Misogyny or sexism
-- Homophobia
-- Transphobia
-- Religious hatred
-- Xenophobia
-- Ableism
-- Any other form of hate speech or discrimination
+    prompt = f"""Is this text hate speech, discriminatory, or toxic? Be strict.
 
-Text to analyze: "{text}"
+Text: "{text}"
 
-Reply with EXACTLY one line:
-SAFE - if the text is acceptable
-TOXIC: [brief reason] - if the text contains any of the above
-
-Be strict. When in doubt, flag as TOXIC."""
+Reply EXACTLY: SAFE or TOXIC: [reason]"""
 
     response = client.chat.complete(
         model=MODEL,
@@ -246,17 +246,21 @@ def _parse_replies(raw_text, style):
     return candidates
 
 
-def score_reply(reply_text, original_tweet_text, quality_config=None, existing_replies=None):
+def score_reply(reply_text, original_tweet_text, quality_config=None, existing_replies=None, skip_llm_moderation=False):
     """Score a reply with reply-specific weights.
 
     Reuses AI detection and readability from scoring/quality_scorer.py.
     Adds relevance scoring (word overlap with original tweet).
     Includes toxicity safeguard: toxic reply = automatic 0.
+
+    When skip_llm_moderation=True, only keyword/pattern toxicity checks run
+    (saves ~160 tokens per call). Use this during candidate ranking, then
+    run full moderation on the winner only.
     """
     cfg = _load_config(quality_config)
 
     # SAFEGUARD: Toxicity check on our reply — instant kill if toxic
-    toxicity = check_toxicity(reply_text)
+    toxicity = check_toxicity(reply_text, skip_llm=skip_llm_moderation)
     if toxicity["is_toxic"]:
         return {
             "overall": 0,
@@ -371,16 +375,23 @@ def _score_reply_duplicate(reply_text, existing_replies):
 
 
 def pick_best_reply(original_tweet_text, candidates, quality_config=None):
-    """Score all candidates and return the best one with its score."""
+    """Score all candidates and return the best one with its score.
+
+    Token optimization: candidates are scored with keyword/pattern-only
+    toxicity checks. LLM moderation runs only on the winning candidate,
+    saving ~160 tokens per non-winning candidate (~66% reduction).
+    """
     existing = get_recent_reply_contents(limit=50)
 
     best = None
     best_score = -1
 
+    # Phase 1: Score all candidates WITHOUT LLM moderation (fast + free)
     for candidate in candidates:
         result = score_reply(
             candidate["content"], original_tweet_text,
             quality_config=quality_config, existing_replies=existing,
+            skip_llm_moderation=True,
         )
         candidate["quality_score"] = result["overall"]
         candidate["score_details"] = result
@@ -388,5 +399,18 @@ def pick_best_reply(original_tweet_text, candidates, quality_config=None):
         if result["overall"] > best_score:
             best_score = result["overall"]
             best = candidate
+
+    if not best:
+        return None
+
+    # Phase 2: Run full toxicity check (including LLM) on the winner only
+    if not best["score_details"].get("blocked"):
+        toxicity = check_toxicity(best["content"], skip_llm=False)
+        if toxicity["is_toxic"]:
+            best["quality_score"] = 0
+            best["score_details"]["overall"] = 0
+            best["score_details"]["toxicity"] = toxicity
+            best["score_details"]["blocked"] = True
+            best["score_details"]["blocked_reason"] = f"TOXIC REPLY: {toxicity['reason']} (method: {toxicity['method']})"
 
     return best

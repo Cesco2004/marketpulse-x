@@ -1,5 +1,7 @@
 from flask import Blueprint, render_template
 from storage.database import get_stats, get_api_usage_summary, get_engagement_config, get_engagement_replies_today, get_schedule_config, get_kill_switch, get_analytics_config
+from limiter.budget_forecaster import get_budget_status
+from limiter.system_health import get_system_health
 
 bp = Blueprint("dashboard", __name__)
 
@@ -69,9 +71,19 @@ def index():
 
     ks = get_kill_switch()
 
+    # Budget status for dashboard card
+    mistral_budget = get_budget_status("mistral")
+    groq_budget = get_budget_status("groq")
+
+    # System health
+    health = get_system_health()
+
     return render_template("dashboard.html", stats=stats, usage=usage, processes=processes,
                            kill_switch_active=bool(ks.get("is_killed")),
-                           kill_switch_reason=ks.get("killed_reason", ""))
+                           kill_switch_reason=ks.get("killed_reason", ""),
+                           mistral_budget=mistral_budget,
+                           groq_budget=groq_budget,
+                           health=health)
 
 
 @bp.route("/api/processes")

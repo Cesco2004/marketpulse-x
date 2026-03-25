@@ -6,6 +6,9 @@ load_dotenv()
 # Mistral API
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
+# Groq API (free tier fallback - Llama 3.3 70B, 6000 req/day)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
 # X / Twitter
 X_API_KEY = os.getenv("X_API_KEY")
 X_API_SECRET = os.getenv("X_API_SECRET")

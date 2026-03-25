@@ -6,9 +6,12 @@ from storage.database import (
     get_kill_switch,
     set_kill_switch,
     get_recent_alerts,
+    get_monthly_budget,
+    update_monthly_budget,
 )
 from limiter.usage_limiter import usage_limiter
 from limiter.alerts import send_alert_email
+from limiter.budget_forecaster import get_budget_status, get_throttle_recommendations
 
 bp = Blueprint("limits", __name__)
 
@@ -27,8 +30,14 @@ def _render_page(**extra):
     ks = get_kill_switch()
     alerts = get_recent_alerts(limit=15)
     alert_emails = _get_alert_emails(limits)
+    budget = get_monthly_budget()
+    mistral_budget = get_budget_status("mistral")
+    groq_budget = get_budget_status("groq")
+    throttle = get_throttle_recommendations("mistral")
     return render_template("limits.html", status=status, limits=limits, ks=ks,
-                           alerts=alerts, alert_emails=alert_emails, **extra)
+                           alerts=alerts, alert_emails=alert_emails,
+                           budget=budget, mistral_budget=mistral_budget,
+                           groq_budget=groq_budget, throttle=throttle, **extra)
 
 
 @bp.route("/limits")
@@ -90,6 +99,20 @@ def remove_email():
     return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "' + email_to_remove + ' removed", "type": "info"}}'}
 
 
+@bp.route("/api/limits/save-budget", methods=["POST"])
+def save_budget():
+    update_monthly_budget(
+        mistral_monthly_token_limit=int(request.form.get("mistral_monthly_token_limit", 1000000)),
+        groq_monthly_token_limit=int(request.form.get("groq_monthly_token_limit", 1500000)),
+        auto_throttle_enabled=1 if request.form.get("auto_throttle_enabled") else 0,
+        throttle_start_pct=int(request.form.get("throttle_start_pct", 70)),
+        throttle_medium_pct=int(request.form.get("throttle_medium_pct", 85)),
+        emergency_stop_pct=int(request.form.get("emergency_stop_pct", 95)),
+        budget_alert_threshold_pct=int(request.form.get("budget_alert_threshold_pct", 75)),
+    )
+    return _render_page(), 200, {"HX-Trigger": '{"showToast": {"message": "Monthly budget saved!", "type": "success"}}'}
+
+
 @bp.route("/api/kill-switch/toggle", methods=["POST"])
 def toggle_kill_switch():
     ks = get_kill_switch()
@@ -129,9 +152,35 @@ def _render_bars(s):
             f'</div>'
         )
 
-    html = bar("Mistral calls", s["mistral_calls"], s["mistral_calls_max"], s["mistral_calls_pct"])
-    html += bar("Mistral tokens", s["mistral_tokens"], s["mistral_tokens_max"], s["mistral_tokens_pct"])
-    html += bar("Mistral cost", s["mistral_cost"], s["mistral_cost_max"], s["mistral_cost_pct"], fmt="${:.4f}")
+    def section(title):
+        return f'<div style="font-size:0.72rem;color:var(--text-secondary);margin:0.6rem 0 0.3rem;font-weight:600">{title}</div>'
+
+    # Mistral daily
+    html = section("Mistral")
+    html += bar("Calls", s["mistral_calls"], s["mistral_calls_max"], s["mistral_calls_pct"])
+    html += bar("Tokens", s["mistral_tokens"], s["mistral_tokens_max"], s["mistral_tokens_pct"])
+    html += bar("Cost", s["mistral_cost"], s["mistral_cost_max"], s["mistral_cost_pct"], fmt="${:.4f}")
+
+    # Groq daily
+    groq_calls = s.get("groq_calls", 0)
+    groq_tokens = s.get("groq_tokens", 0)
+    html += section("Groq")
+    fill = "5" if groq_calls > 0 else "0"
+    html += (
+        f'<div class="limit-bar">'
+        f'<div class="limit-label"><span>Calls</span><span>{groq_calls} today &middot; {groq_tokens:,} tokens</span></div>'
+        f'<div class="progress-track"><div class="progress-fill" style="width:{fill}%;background:var(--green)"></div></div>'
+        f'</div>'
+    )
+
+    # X/Twitter daily
+    html += section("X / Twitter")
     html += bar("Tweets", s["x_tweets"], s["x_tweets_max"], s["x_tweets_pct"])
     html += bar("Replies", s["x_replies"], s["x_replies_max"], s["x_replies_pct"])
+
+    # Monthly
+    html += section("This Month")
+    html += bar("Mistral", s.get("mistral_monthly_tokens", 0), s.get("mistral_monthly_limit", 1000000), s.get("mistral_monthly_pct", 0))
+    html += bar("Groq", s.get("groq_monthly_tokens", 0), s.get("groq_monthly_limit", 1500000), s.get("groq_monthly_pct", 0))
+
     return html

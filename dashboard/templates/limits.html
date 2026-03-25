@@ -46,9 +46,23 @@
         </div>
         {% endmacro %}
 
-        {{ bar("Mistral calls", status.mistral_calls, status.mistral_calls_max, status.mistral_calls_pct, status.mistral_calls, status.mistral_calls_max) }}
-        {{ bar("Mistral tokens", status.mistral_tokens, status.mistral_tokens_max, status.mistral_tokens_pct, status.mistral_tokens, status.mistral_tokens_max) }}
-        {{ bar("Mistral cost", status.mistral_cost, status.mistral_cost_max, status.mistral_cost_pct, "$%.4f"|format(status.mistral_cost), "$%.2f"|format(status.mistral_cost_max)) }}
+        <div style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:0.3rem;font-weight:600">Mistral</div>
+        {{ bar("Calls", status.mistral_calls, status.mistral_calls_max, status.mistral_calls_pct, status.mistral_calls, status.mistral_calls_max) }}
+        {{ bar("Tokens", status.mistral_tokens, status.mistral_tokens_max, status.mistral_tokens_pct, status.mistral_tokens, status.mistral_tokens_max) }}
+        {{ bar("Cost", status.mistral_cost, status.mistral_cost_max, status.mistral_cost_pct, "$%.4f"|format(status.mistral_cost), "$%.2f"|format(status.mistral_cost_max)) }}
+
+        <div style="font-size:0.72rem;color:var(--text-secondary);margin:0.6rem 0 0.3rem;font-weight:600">Groq</div>
+        <div class="limit-bar">
+            <div class="limit-label">
+                <span>Calls</span>
+                <span class="text-muted">{{ status.groq_calls|default(0) }} today &middot; {{ "{:,}".format(status.groq_tokens|default(0)) }} tokens</span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" style="width:{% if status.groq_calls|default(0) > 0 %}5{% else %}0{% endif %}%;background:var(--green)"></div>
+            </div>
+        </div>
+
+        <div style="font-size:0.72rem;color:var(--text-secondary);margin:0.6rem 0 0.3rem;font-weight:600">X / Twitter</div>
         {{ bar("Tweets", status.x_tweets, status.x_tweets_max, status.x_tweets_pct, status.x_tweets, status.x_tweets_max) }}
         {{ bar("Replies", status.x_replies, status.x_replies_max, status.x_replies_pct, status.x_replies, status.x_replies_max) }}
     </div>
@@ -60,23 +74,100 @@
     {% endif %}
 </div>
 
-<!-- API Limits Configuration -->
+<!-- Monthly Budget Configuration -->
 <div class="card" style="margin-bottom:1rem">
-    <h3>API Limits</h3>
-    <form hx-post="/api/limits/save-limits" hx-target="body">
+    <h3>Monthly Budget</h3>
+
+    <!-- Budget status -->
+    {% if throttle.reason %}
+    <div class="status-banner {% if mistral_budget.pace_status == 'on_track' %}status-green{% elif mistral_budget.pace_status == 'ahead' %}status-yellow{% else %}status-banner{% endif %}" style="{% if mistral_budget.pace_status not in ['on_track', 'ahead'] %}background:var(--red-soft);border:1px solid var(--red){% endif %}">
+        <strong>Auto-throttle:</strong> {{ throttle.reason }}
+    </div>
+    {% endif %}
+
+    <form hx-post="/api/limits/save-budget" hx-target="body">
         <div class="limits-form-grid">
             <div class="form-group">
-                <label>Mistral max calls/day</label>
+                <label>Mistral monthly token limit</label>
+                <input type="number" name="mistral_monthly_token_limit" value="{{ budget.mistral_monthly_token_limit }}" min="100000" step="100000" class="input-field">
+                <span class="text-muted" style="font-size:0.72rem">Currently: {{ "{:,}".format(mistral_budget.tokens_used) }} ({{ mistral_budget.pct_used }}%)</span>
+            </div>
+            <div class="form-group">
+                <label>Groq monthly token limit</label>
+                <input type="number" name="groq_monthly_token_limit" value="{{ budget.groq_monthly_token_limit }}" min="100000" step="100000" class="input-field">
+                <span class="text-muted" style="font-size:0.72rem">Currently: {{ "{:,}".format(groq_budget.tokens_used) }} ({{ groq_budget.pct_used }}%)</span>
+            </div>
+            <div class="form-group" style="grid-column:span 2">
+                <label><input type="checkbox" name="auto_throttle_enabled" {% if budget.auto_throttle_enabled %}checked{% endif %}> Enable auto-throttle (reduce activity when budget is running low)</label>
+            </div>
+            <div class="form-group">
+                <label>Throttle start (%)</label>
+                <input type="number" name="throttle_start_pct" value="{{ budget.throttle_start_pct }}" min="50" max="100" class="input-field">
+                <span class="text-muted" style="font-size:0.72rem">Reduce replies, disable LLM moderation</span>
+            </div>
+            <div class="form-group">
+                <label>Throttle medium (%)</label>
+                <input type="number" name="throttle_medium_pct" value="{{ budget.throttle_medium_pct }}" min="50" max="100" class="input-field">
+                <span class="text-muted" style="font-size:0.72rem">Pause post generation</span>
+            </div>
+            <div class="form-group">
+                <label>Emergency stop (%)</label>
+                <input type="number" name="emergency_stop_pct" value="{{ budget.emergency_stop_pct }}" min="80" max="100" class="input-field">
+                <span class="text-muted" style="font-size:0.72rem">Stop all LLM operations</span>
+            </div>
+            <div class="form-group">
+                <label>Budget alert threshold (%)</label>
+                <input type="number" name="budget_alert_threshold_pct" value="{{ budget.budget_alert_threshold_pct }}" min="50" max="100" class="input-field">
+                <span class="text-muted" style="font-size:0.72rem">Send email alert</span>
+            </div>
+        </div>
+        <div style="margin-top:1rem">
+            <button type="submit" class="btn btn-primary">Save Budget Settings</button>
+        </div>
+    </form>
+
+    <!-- Forecast summary -->
+    <div style="margin-top:1rem;padding:0.75rem;background:var(--bg-tertiary);border-radius:8px;font-size:0.82rem">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+            <div><span class="text-muted">Daily avg (Mistral):</span> {{ "{:,}".format(mistral_budget.daily_avg_used) }} tokens</div>
+            <div><span class="text-muted">Projected EOM:</span> {{ "{:,}".format(mistral_budget.projected_end_of_month) }} tokens</div>
+            <div><span class="text-muted">Recommended daily cap:</span> {{ "{:,}".format(mistral_budget.recommended_daily_cap) }}</div>
+            <div><span class="text-muted">Days remaining:</span> {{ mistral_budget.days_remaining }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- API Limits Configuration -->
+<div class="card" style="margin-bottom:1rem">
+    <h3>Daily Limits</h3>
+    <form hx-post="/api/limits/save-limits" hx-target="body">
+        <h4 style="margin:0 0 0.5rem;font-size:0.82rem;color:var(--text-secondary)">Mistral (paid tier)</h4>
+        <div class="limits-form-grid">
+            <div class="form-group">
+                <label>Max calls/day</label>
                 <input type="number" name="mistral_max_calls_per_day" value="{{ limits.mistral_max_calls_per_day }}" min="1" class="input-field">
             </div>
             <div class="form-group">
-                <label>Mistral max tokens/day</label>
+                <label>Max tokens/day</label>
                 <input type="number" name="mistral_max_tokens_per_day" value="{{ limits.mistral_max_tokens_per_day }}" min="1000" step="1000" class="input-field">
             </div>
             <div class="form-group">
-                <label>Mistral max cost/day ($)</label>
+                <label>Max cost/day ($)</label>
                 <input type="text" inputmode="decimal" name="mistral_max_cost_per_day" value="{{ '%.2f'|format(limits.mistral_max_cost_per_day) }}" placeholder="1.00" class="input-field">
             </div>
+            <div class="form-group">
+                <label>Warning threshold (%)</label>
+                <input type="number" name="warning_threshold_pct" value="{{ limits.warning_threshold_pct }}" min="50" max="100" class="input-field">
+            </div>
+        </div>
+
+        <h4 style="margin:1rem 0 0.25rem;font-size:0.82rem;color:var(--text-secondary)">Groq (free tier)</h4>
+        <div class="status-banner status-muted" style="margin-bottom:0.5rem">
+            Free tier &mdash; 6,000 requests/day, no daily limits to configure. Monthly budget managed above.
+        </div>
+
+        <h4 style="margin:1rem 0 0.5rem;font-size:0.82rem;color:var(--text-secondary)">X / Twitter</h4>
+        <div class="limits-form-grid">
             <div class="form-group">
                 <label>Max tweets/day</label>
                 <input type="number" name="x_max_tweets_per_day" value="{{ limits.x_max_tweets_per_day }}" min="1" class="input-field">
@@ -85,15 +176,16 @@
                 <label>Max replies/day</label>
                 <input type="number" name="x_max_replies_per_day" value="{{ limits.x_max_replies_per_day }}" min="1" class="input-field">
             </div>
-            <div class="form-group">
-                <label>Warning threshold (%)</label>
-                <input type="number" name="warning_threshold_pct" value="{{ limits.warning_threshold_pct }}" min="50" max="100" class="input-field">
-            </div>
+        </div>
+
+        <h4 style="margin:1rem 0 0.5rem;font-size:0.82rem;color:var(--text-secondary)">General</h4>
+        <div class="limits-form-grid">
             <div class="form-group">
                 <label>Max consecutive errors</label>
                 <input type="number" name="max_consecutive_errors" value="{{ limits.max_consecutive_errors }}" min="1" class="input-field">
             </div>
         </div>
+
         <div style="margin-top:1rem">
             <button type="submit" class="btn btn-primary">Save Limits</button>
         </div>

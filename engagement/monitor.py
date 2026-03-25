@@ -24,6 +24,7 @@ from storage.database import (
 )
 from engagement.twitter_reader import twitter_reader
 from engagement.reply_generator import generate_reply, pick_best_reply, check_toxicity
+from publisher.x_publisher import reply_to_tweet as official_reply_to_tweet
 from limiter.usage_limiter import usage_limiter
 
 
@@ -134,8 +135,27 @@ class EngagementMonitor:
             print("[Engagement] Outside active hours, skipping poll.")
             return
 
+        # Budget-aware throttling
+        try:
+            from limiter.budget_forecaster import get_throttle_recommendations
+            throttle = get_throttle_recommendations("mistral")
+
+            if not throttle.get("engagement_enabled", True):
+                print(f"[Engagement] Suspended by auto-throttle: {throttle['reason']}")
+                return
+
+            throttle_cap = throttle.get("max_replies_per_day")
+        except Exception:
+            throttle_cap = None
+
         daily_count = get_engagement_replies_today()
         max_daily = cfg.get("max_replies_per_day", 10)
+
+        # Apply throttle cap if stricter than config
+        if throttle_cap is not None and throttle_cap < max_daily:
+            print(f"[Engagement] Auto-throttle: replies capped at {throttle_cap}/day (config: {max_daily})")
+            max_daily = throttle_cap
+
         if daily_count >= max_daily:
             print(f"[Engagement] Daily limit reached ({daily_count}/{max_daily}).")
             return
@@ -345,7 +365,7 @@ class EngagementMonitor:
             if self._stop_event.is_set():
                 break
             try:
-                tweet_id = twitter_reader.reply_to_tweet(reply["original_tweet_id"], reply["reply_content"])
+                tweet_id = official_reply_to_tweet(reply["original_tweet_id"], reply["reply_content"])
                 mark_engagement_reply_posted(reply["id"], tweet_id)
                 self.stats["replies_posted"] += 1
                 print(f"[Engagement] Posted reply to @{reply['target_username']}: {reply['reply_content'][:60]}...")

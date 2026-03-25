@@ -15,7 +15,8 @@ from storage.database import (
     update_post_status,
 )
 from sources.rss_fetcher import fetch_all_feeds, fetch_all_feeds_from_db, keyword_prefilter, format_articles_for_prompt
-from generator.mistral_generator import rank_articles, generate_posts, get_batch_id
+from generator.provider_router import rank_articles, generate_posts
+from generator.mistral_generator import get_batch_id
 from publisher.x_publisher import post_tweet
 from scoring.quality_scorer import score_post
 from limiter import UsageLimitReached
@@ -59,11 +60,22 @@ def run_fetch_pipeline():
     saved, new_urls = save_articles(articles)
     result["articles_saved"] = saved
 
-    # Short-circuit: no new articles → skip Mistral calls, save tokens
+    # Short-circuit: no new articles → skip LLM calls, save tokens
     if saved == 0:
         result["success"] = True
         result["skipped_reason"] = "no_new_articles"
         return result
+
+    # Budget-aware: skip generation if auto-throttle says so
+    try:
+        from limiter.budget_forecaster import get_throttle_recommendations
+        throttle = get_throttle_recommendations("mistral")
+        if throttle.get("skip_post_generation"):
+            result["success"] = True
+            result["skipped_reason"] = f"budget_throttle: {throttle['reason']}"
+            return result
+    except Exception:
+        pass
 
     # Step 2: Keyword pre-filter (only new articles)
     new_url_set = set(new_urls)

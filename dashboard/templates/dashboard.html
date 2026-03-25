@@ -52,6 +52,24 @@
     {% endfor %}
 </div>
 
+<!-- System Health -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.6rem;margin-bottom:1.25rem">
+    <div class="process-card">
+        <div class="process-dot {{ 'active' if health.status == 'ok' else 'inactive' }}"></div>
+        <div class="process-info">
+            <div class="process-name">System Health</div>
+            <div class="process-detail">
+                Disk: {{ health.disk_used_gb }}/{{ health.disk_total_gb }} GB ({{ health.disk_pct }}%)
+                {% if health.mem_total_mb %} | RAM: {{ health.mem_used_mb }}/{{ health.mem_total_mb }} MB{% endif %}
+                | DB: {{ health.db_size_mb }} MB
+            </div>
+        </div>
+        <span style="font-size:0.68rem;font-weight:600;{% if health.status == 'ok' %}color:var(--green){% elif health.status == 'warning' %}color:var(--yellow){% else %}color:var(--red){% endif %}">
+            {{ health.status|upper }}
+        </span>
+    </div>
+</div>
+
 <!-- Pipeline -->
 <div class="section-title">Content Pipeline</div>
 <div class="pipeline-bar">
@@ -81,20 +99,55 @@
     </div>
 </div>
 
-<!-- API Usage Summary -->
-<div class="section-title">API Usage (Estimates)</div>
+<!-- Monthly Budget -->
+<div class="section-title">Monthly Budget</div>
 <div class="usage-grid">
     <div class="usage-card">
-        <h4>Mistral API</h4>
-        <div class="usage-number">{{ usage.mistral_tokens_total|default(0) }}</div>
-        <div class="usage-detail">tokens used total</div>
-        <div class="usage-detail">{{ usage.mistral_calls|default(0) }} API calls &middot; ~{{ "%.4f"|format(usage.mistral_cost|default(0)) }} EUR est.</div>
+        <h4>Mistral</h4>
+        <div class="usage-number">{{ "{:,}".format(mistral_budget.tokens_used) }} <span style="font-size:0.7rem;color:var(--text-secondary)">/ {{ "{:,}".format(mistral_budget.monthly_limit) }}</span></div>
+        <div class="usage-detail">tokens this month ({{ mistral_budget.pct_used }}%)</div>
+        <div class="progress-track" style="margin:0.4rem 0">
+            <div class="progress-fill" style="width:{{ [mistral_budget.pct_used, 100]|min }}%;background:{% if mistral_budget.pct_used < 60 %}var(--green){% elif mistral_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
+        </div>
+        <div class="usage-detail">
+            {% if mistral_budget.pace_status == "on_track" %}On track{% elif mistral_budget.pace_status == "ahead" %}Ahead of pace{% elif mistral_budget.pace_status == "critical" %}Critical{% else %}Exhausted{% endif %}
+            &middot; Projected: {{ "{:,}".format(mistral_budget.projected_end_of_month) }} by month end
+        </div>
+        <div class="usage-detail">{{ mistral_budget.days_remaining }} days remaining &middot; ~{{ "{:,}".format(mistral_budget.recommended_daily_cap) }} tokens/day recommended</div>
     </div>
     <div class="usage-card">
-        <h4>X / Twitter API</h4>
-        <div class="usage-number">{{ usage.x_posts|default(0) }}</div>
-        <div class="usage-detail">tweets posted</div>
-        <div class="usage-detail">~{{ "%.4f"|format(usage.x_cost|default(0)) }} USD est.</div>
+        <h4>Groq</h4>
+        <div class="usage-number">{{ "{:,}".format(groq_budget.tokens_used) }} <span style="font-size:0.7rem;color:var(--text-secondary)">/ {{ "{:,}".format(groq_budget.monthly_limit) }}</span></div>
+        <div class="usage-detail">tokens this month ({{ groq_budget.pct_used }}%)</div>
+        <div class="progress-track" style="margin:0.4rem 0">
+            <div class="progress-fill" style="width:{{ [groq_budget.pct_used, 100]|min }}%;background:{% if groq_budget.pct_used < 60 %}var(--green){% elif groq_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
+        </div>
+        <div class="usage-detail">
+            {% if groq_budget.tokens_used == 0 %}Ready &middot; No calls yet this month{% else %}{{ groq_budget.days_remaining }} days remaining{% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- API Usage Summary -->
+<div class="section-title">API Usage (Today)</div>
+<div class="usage-grid">
+    <div class="usage-card">
+        <h4>Mistral</h4>
+        <div class="usage-number">{{ "{:,}".format(usage.mistral_today_tokens|default(0)) }}</div>
+        <div class="usage-detail">tokens today</div>
+        <div class="usage-detail">{{ usage.mistral_today_calls|default(0) }} calls &middot; ~{{ "%.4f"|format(usage.mistral_today_cost|default(0)) }} EUR</div>
+    </div>
+    <div class="usage-card">
+        <h4>Groq</h4>
+        <div class="usage-number">{{ "{:,}".format(usage.groq_today_tokens|default(0)) }}</div>
+        <div class="usage-detail">tokens today</div>
+        <div class="usage-detail">{{ usage.groq_today_calls|default(0) }} calls &middot; Free tier</div>
+    </div>
+    <div class="usage-card">
+        <h4>X / Twitter</h4>
+        <div class="usage-number">{{ usage.x_today_posts|default(0) }}</div>
+        <div class="usage-detail">tweets today</div>
+        <div class="usage-detail">~{{ "%.4f"|format(usage.x_today_cost|default(0)) }} USD est.</div>
     </div>
 </div>
 
