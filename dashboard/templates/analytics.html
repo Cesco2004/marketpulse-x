@@ -1,0 +1,412 @@
+{% extends "base.html" %}
+{% block title %}Analytics - Quantum Brief{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+    <h2>Analytics</h2>
+    <div class="filter-group">
+        <a href="/analytics?period=7" role="button" {% if period == '7' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>7d</a>
+        <a href="/analytics?period=30" role="button" {% if period == '30' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>30d</a>
+        <a href="/analytics?period=90" role="button" {% if period == '90' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>90d</a>
+    </div>
+</div>
+
+<!-- Collector Status -->
+<div class="process-card" style="margin-bottom:1rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+    <div class="process-dot {{ 'active' if collector_running else 'inactive' }}"></div>
+    <span style="font-size:0.82rem;color:var(--text-primary);font-weight:600">Metrics Collector</span>
+    <span id="collector-toggle">
+        <button class="btn-toggle" hx-post="/api/analytics/collector/toggle" hx-target="#collector-toggle" hx-swap="innerHTML">
+            {% if collector_running %}Stop Collector{% else %}Start Collector{% endif %}
+        </button>
+        <span style="font-size:0.7rem;font-weight:600;{% if collector_running %}color:var(--green){% else %}color:var(--text-tertiary){% endif %};margin-left:0.5rem">
+            {% if collector_running %}ON{% else %}OFF{% endif %}
+        </span>
+    </span>
+    <button class="btn-toggle" hx-post="/api/analytics/collect-now" hx-target="#collect-result" hx-disabled-elt="this">
+        Collect Now
+    </button>
+    <span id="collect-result" style="font-size:0.72rem;color:var(--text-tertiary)">
+        {% if collector_stats.get('last_collection') %}
+            Last: {{ collector_stats.last_collection }} | {{ collector_stats.tweets_scraped }} tweets
+        {% endif %}
+    </span>
+</div>
+
+<!-- KPI Cards -->
+{% if summary.total_tweets > 0 %}
+<div class="kpi-grid">
+    <div class="kpi-card">
+        <div class="kpi-value">{{ summary.total_tweets }}</div>
+        <div class="kpi-label">Tracked Tweets</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value">{{ "%.2f"|format(summary.avg_engagement_rate or 0) }}%</div>
+        <div class="kpi-label">Avg Engagement Rate</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value">
+            {% if (summary.total_views or 0) >= 1000000 %}{{ "%.1f"|format((summary.total_views or 0) / 1000000) }}M
+            {% elif (summary.total_views or 0) >= 1000 %}{{ "%.1f"|format((summary.total_views or 0) / 1000) }}K
+            {% else %}{{ summary.total_views or 0 }}{% endif %}
+        </div>
+        <div class="kpi-label">Total Views</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value">{{ "{:,}".format(summary.followers or 0) }}</div>
+        <div class="kpi-label">Followers</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value">
+            {% if summary.follower_growth_7d > 0 %}+{% endif %}{{ summary.follower_growth_7d or 0 }}
+        </div>
+        <div class="kpi-label">Growth (7d)</div>
+        <div class="kpi-change {% if (summary.follower_growth_7d or 0) > 0 %}positive{% elif (summary.follower_growth_7d or 0) < 0 %}negative{% else %}neutral{% endif %}">
+            {% if (summary.follower_growth_7d or 0) > 0 %}&#9650;{% elif (summary.follower_growth_7d or 0) < 0 %}&#9660;{% else %}&#8212;{% endif %}
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="no-data-msg" style="margin-bottom:1rem">
+    No analytics data yet. Click <strong>Collect Now</strong> to scrape metrics for your posted tweets.
+</div>
+{% endif %}
+
+<!-- Configuration (collapsible) -->
+<details style="margin-bottom:1.25rem">
+    <summary style="cursor:pointer;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-tertiary);padding-bottom:0.4rem;border-bottom:1px solid var(--border-color)">
+        Configuration
+    </summary>
+    <form hx-post="/api/analytics/config" hx-target="#config-result" hx-swap="innerHTML"
+          style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0.75rem;margin-top:0.75rem;padding:1rem;background:var(--bg-secondary);border-radius:12px;border:1px solid var(--border-color)">
+        <label style="font-size:0.72rem;color:var(--text-secondary)">
+            Twitter Username
+            <input type="text" name="own_username" value="{{ config.own_username or '' }}" placeholder="@username"
+                   style="width:100%;margin-top:0.25rem;padding:0.4rem 0.6rem;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);font-size:0.8rem">
+        </label>
+        <label style="font-size:0.72rem;color:var(--text-secondary)">
+            Collection Interval (hours)
+            <input type="number" name="collection_interval_hours" value="{{ config.collection_interval_hours or 12 }}" min="1" max="72"
+                   style="width:100%;margin-top:0.25rem;padding:0.4rem 0.6rem;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);font-size:0.8rem">
+        </label>
+        <label style="font-size:0.72rem;color:var(--text-secondary)">
+            Lookback (days)
+            <input type="number" name="lookback_days" value="{{ config.lookback_days or 30 }}" min="7" max="90"
+                   style="width:100%;margin-top:0.25rem;padding:0.4rem 0.6rem;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);font-size:0.8rem">
+        </label>
+        <div style="display:flex;align-items:flex-end;gap:0.5rem">
+            <button type="submit" class="btn-toggle" style="margin-bottom:0">Save</button>
+            <span id="config-result"></span>
+        </div>
+    </form>
+    {% if not config.own_username %}
+    <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--yellow)">
+        Set your Twitter username above to enable follower tracking.
+    </div>
+    {% endif %}
+</details>
+
+<!-- Charts -->
+{% if summary.total_tweets > 0 %}
+
+<!-- Followers Over Time -->
+{% if followers_json != '[]' %}
+<div class="section-title">Followers Over Time</div>
+<div class="chart-card">
+    <canvas id="followersChart" height="180"></canvas>
+</div>
+{% endif %}
+
+<!-- Engagement Trends -->
+{% if engagement_trend_json != '[]' %}
+<div class="section-title">Engagement Trends</div>
+<div class="chart-card">
+    <canvas id="engagementChart" height="180"></canvas>
+</div>
+{% endif %}
+
+<!-- Post Type + Heatmap side by side -->
+<div class="chart-row">
+    {% if by_type_json != '[]' %}
+    <div>
+        <div class="section-title">Performance by Post Type</div>
+        <div class="chart-card">
+            <canvas id="postTypeChart" height="220"></canvas>
+        </div>
+    </div>
+    {% endif %}
+    {% if heatmap_json != '[]' %}
+    <div>
+        <div class="section-title">Best Posting Times</div>
+        <div class="chart-card">
+            <canvas id="heatmapChart" height="220"></canvas>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Quality vs Engagement -->
+{% if quality_corr_json != '[]' %}
+<div class="section-title">Quality Score vs Engagement</div>
+<div class="chart-card">
+    <canvas id="qualityChart" height="180"></canvas>
+</div>
+{% endif %}
+
+<!-- Top / Flop Tweets -->
+{% if top_tweets or flop_tweets %}
+<div class="chart-row">
+    {% if top_tweets %}
+    <div>
+        <div class="section-title">Top Performers</div>
+        {% for t in top_tweets %}
+        <div class="tweet-perf-card">
+            <div class="tweet-text">{{ t.content[:140] }}{% if t.content|length > 140 %}...{% endif %}</div>
+            <div class="tweet-stats">
+                <span>&#9825; {{ t.likes }}</span>
+                <span>&#8635; {{ t.retweets }}</span>
+                <span>&#9993; {{ t.replies }}</span>
+                <span>&#128065; {{ "{:,}".format(t.views or 0) }}</span>
+                <span style="color:var(--green)">{{ "%.2f"|format(t.engagement_rate or 0) }}% ER</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if flop_tweets %}
+    <div>
+        <div class="section-title">Lowest Performers</div>
+        {% for t in flop_tweets %}
+        <div class="tweet-perf-card">
+            <div class="tweet-text">{{ t.content[:140] }}{% if t.content|length > 140 %}...{% endif %}</div>
+            <div class="tweet-stats">
+                <span>&#9825; {{ t.likes }}</span>
+                <span>&#8635; {{ t.retweets }}</span>
+                <span>&#9993; {{ t.replies }}</span>
+                <span>&#128065; {{ "{:,}".format(t.views or 0) }}</span>
+                <span style="color:var(--red)">{{ "%.2f"|format(t.engagement_rate or 0) }}% ER</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- All Tracked Tweets Table -->
+{% if tweets %}
+<div class="section-title">All Tracked Tweets</div>
+<div style="overflow-x:auto;background:var(--bg-secondary);border-radius:12px;border:1px solid var(--border-color);padding:0.5rem">
+    <table class="analytics-table" id="tweets-table">
+        <thead>
+            <tr>
+                <th onclick="sortTable(0)" class="tweet-col">Tweet</th>
+                <th onclick="sortTable(1)">Type</th>
+                <th onclick="sortTable(2)">Posted</th>
+                <th onclick="sortTable(3)">&#9825;</th>
+                <th onclick="sortTable(4)">RT</th>
+                <th onclick="sortTable(5)">Replies</th>
+                <th onclick="sortTable(6)">Views</th>
+                <th onclick="sortTable(7)">ER%</th>
+                <th onclick="sortTable(8)">Quality</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in tweets %}
+            <tr>
+                <td class="tweet-col" title="{{ t.content }}">{{ t.content[:80] }}{% if t.content and t.content|length > 80 %}...{% endif %}</td>
+                <td><span class="type-badge">{{ t.post_type or '?' }}</span></td>
+                <td style="white-space:nowrap">{{ t.posted_at[:10] if t.posted_at else '-' }}</td>
+                <td>{{ t.likes }}</td>
+                <td>{{ t.retweets }}</td>
+                <td>{{ t.replies }}</td>
+                <td>{{ "{:,}".format(t.views or 0) }}</td>
+                <td>{{ "%.2f"|format(t.engagement_rate or 0) }}</td>
+                <td>{{ "%.0f"|format(t.quality_score or 0) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endif %}{# end if summary.total_tweets > 0 #}
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+    // Dark theme defaults
+    Chart.defaults.color = '#71767b';
+    Chart.defaults.borderColor = '#2f3336';
+    Chart.defaults.plugins.legend.labels.boxWidth = 12;
+    Chart.defaults.plugins.legend.labels.padding = 12;
+
+    const BLUE = '#1d9bf0';
+    const GREEN = '#00ba7c';
+    const RED = '#f4212e';
+    const YELLOW = '#ffd400';
+    const PURPLE = '#7856ff';
+
+    // --- Followers Chart ---
+    const followersData = {{ followers_json|safe }};
+    const followersEl = document.getElementById('followersChart');
+    if (followersEl && followersData.length > 0) {
+        new Chart(followersEl, {
+            type: 'line',
+            data: {
+                labels: followersData.map(d => d.collected_at.slice(0, 10)),
+                datasets: [{
+                    label: 'Followers',
+                    data: followersData.map(d => d.followers),
+                    borderColor: BLUE,
+                    backgroundColor: 'rgba(29,155,240,0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: false } },
+                plugins: { legend: { display: false } },
+            }
+        });
+    }
+
+    // --- Engagement Trends Chart ---
+    const engData = {{ engagement_trend_json|safe }};
+    const engEl = document.getElementById('engagementChart');
+    if (engEl && engData.length > 0) {
+        new Chart(engEl, {
+            type: 'line',
+            data: {
+                labels: engData.map(d => d.date),
+                datasets: [
+                    { label: 'Avg Likes', data: engData.map(d => d.avg_likes), borderColor: RED, tension: 0.3, pointRadius: 2 },
+                    { label: 'Avg RT', data: engData.map(d => d.avg_retweets), borderColor: GREEN, tension: 0.3, pointRadius: 2 },
+                    { label: 'Avg Replies', data: engData.map(d => d.avg_replies), borderColor: PURPLE, tension: 0.3, pointRadius: 2 },
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } },
+            }
+        });
+    }
+
+    // --- Post Type Bar Chart ---
+    const typeData = {{ by_type_json|safe }};
+    const typeEl = document.getElementById('postTypeChart');
+    if (typeEl && typeData.length > 0) {
+        const colors = [BLUE, GREEN, RED, YELLOW, PURPLE, '#ff6b6b', '#51cf66'];
+        new Chart(typeEl, {
+            type: 'bar',
+            data: {
+                labels: typeData.map(d => d.post_type),
+                datasets: [
+                    { label: 'Avg Likes', data: typeData.map(d => d.avg_likes), backgroundColor: RED + '99' },
+                    { label: 'Avg RT', data: typeData.map(d => d.avg_retweets), backgroundColor: GREEN + '99' },
+                    { label: 'Avg Replies', data: typeData.map(d => d.avg_replies), backgroundColor: PURPLE + '99' },
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } },
+                plugins: { legend: { position: 'bottom' } },
+            }
+        });
+    }
+
+    // --- Heatmap (Bubble Chart) ---
+    const heatData = {{ heatmap_json|safe }};
+    const heatEl = document.getElementById('heatmapChart');
+    if (heatEl && heatData.length > 0) {
+        const maxEng = Math.max(...heatData.map(d => d.avg_engagement || 0), 0.01);
+        new Chart(heatEl, {
+            type: 'bubble',
+            data: {
+                datasets: [{
+                    label: 'Engagement',
+                    data: heatData.map(d => ({
+                        x: d.hour,
+                        y: d.day_of_week,
+                        r: Math.max(3, (d.avg_engagement / maxEng) * 20),
+                    })),
+                    backgroundColor: heatData.map(d => {
+                        const intensity = Math.min(1, (d.avg_engagement || 0) / maxEng);
+                        return `rgba(29,155,240,${0.2 + intensity * 0.7})`;
+                    }),
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { title: { display: true, text: 'Hour' }, min: 0, max: 23 },
+                    y: {
+                        title: { display: true, text: 'Day' },
+                        min: -0.5, max: 6.5,
+                        ticks: {
+                            callback: v => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][Math.round(v)] || ''
+                        }
+                    }
+                },
+                plugins: { legend: { display: false } },
+            }
+        });
+    }
+
+    // --- Quality vs Engagement Scatter ---
+    const qualData = {{ quality_corr_json|safe }};
+    const qualEl = document.getElementById('qualityChart');
+    if (qualEl && qualData.length > 0) {
+        const typeColors = {};
+        const palette = [BLUE, GREEN, RED, YELLOW, PURPLE, '#ff6b6b', '#51cf66'];
+        let ci = 0;
+        qualData.forEach(d => {
+            if (!typeColors[d.post_type]) typeColors[d.post_type] = palette[ci++ % palette.length];
+        });
+        new Chart(qualEl, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Quality vs Engagement',
+                    data: qualData.map(d => ({ x: d.quality_score, y: d.engagement_rate })),
+                    backgroundColor: qualData.map(d => (typeColors[d.post_type] || BLUE) + '99'),
+                    pointRadius: 5,
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { title: { display: true, text: 'Quality Score' }, min: 0, max: 100 },
+                    y: { title: { display: true, text: 'Engagement Rate %' }, beginAtZero: true },
+                },
+                plugins: { legend: { display: false } },
+            }
+        });
+    }
+
+    // --- Table sorting ---
+    window.sortTable = function(colIdx) {
+        const table = document.getElementById('tweets-table');
+        if (!table) return;
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const dir = table.dataset.sortDir === 'asc' ? 'desc' : 'asc';
+        table.dataset.sortDir = dir;
+
+        rows.sort((a, b) => {
+            let va = a.cells[colIdx].textContent.trim().replace(/,/g, '');
+            let vb = b.cells[colIdx].textContent.trim().replace(/,/g, '');
+            const na = parseFloat(va), nb = parseFloat(vb);
+            if (!isNaN(na) && !isNaN(nb)) {
+                return dir === 'asc' ? na - nb : nb - na;
+            }
+            return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        });
+        rows.forEach(r => tbody.appendChild(r));
+    };
+})();
+</script>
+{% endblock %}

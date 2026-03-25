@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template
-from storage.database import get_stats, get_api_usage_summary, get_engagement_config, get_engagement_replies_today, get_schedule_config, get_kill_switch
+from storage.database import get_stats, get_api_usage_summary, get_engagement_config, get_engagement_replies_today, get_schedule_config, get_kill_switch, get_analytics_config
 
 bp = Blueprint("dashboard", __name__)
 
@@ -52,6 +52,21 @@ def index():
         "detail": eng_detail,
     })
 
+    # Metrics collector
+    try:
+        from analytics.collector import metrics_collector
+        coll_running = metrics_collector.is_running
+        coll_stats = metrics_collector.stats
+        coll_detail = f"Last: {coll_stats.get('last_collection', 'never')} | {coll_stats.get('tweets_scraped', 0)} tweets scraped"
+    except Exception:
+        coll_running = False
+        coll_detail = "Not loaded"
+    processes.append({
+        "name": "Metrics Collector",
+        "active": coll_running,
+        "detail": coll_detail,
+    })
+
     ks = get_kill_switch()
 
     return render_template("dashboard.html", stats=stats, usage=usage, processes=processes,
@@ -97,6 +112,17 @@ def api_processes():
     else:
         detail = f"Inactive | {eng_today}/{eng_max} replies today"
     processes.append(("Engagement Monitor", eng_running, detail))
+
+    # Metrics Collector
+    try:
+        from analytics.collector import metrics_collector
+        coll_running = metrics_collector.is_running
+        coll_stats = metrics_collector.stats
+        coll_detail = f"Last: {coll_stats.get('last_collection', 'never')} | {coll_stats.get('tweets_scraped', 0)} tweets scraped"
+    except Exception:
+        coll_running = False
+        coll_detail = "Not loaded"
+    processes.append(("Metrics Collector", coll_running, coll_detail))
 
     html = ""
     for name, active, detail in processes:

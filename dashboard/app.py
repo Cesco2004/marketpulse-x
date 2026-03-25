@@ -40,6 +40,7 @@ def create_app():
     from dashboard.routes.settings import bp as settings_bp
     from dashboard.routes.engagement import bp as engagement_bp
     from dashboard.routes.limits import bp as limits_bp
+    from dashboard.routes.analytics import bp as analytics_bp
 
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(articles_bp)
@@ -53,5 +54,6 @@ def create_app():
     app.register_blueprint(settings_bp)
     app.register_blueprint(engagement_bp)
     app.register_blueprint(limits_bp)
+    app.register_blueprint(analytics_bp)
 
     return app

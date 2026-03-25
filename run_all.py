@@ -11,7 +11,7 @@ import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from storage.database import init_db, get_approved_posts, get_engagement_config, get_schedule_config
+from storage.database import init_db, get_approved_posts, get_engagement_config, get_schedule_config, get_analytics_config
 from dashboard.app import create_app
 
 
@@ -37,6 +37,16 @@ def main():
             print("[run_all] Engagement monitor started.")
         except Exception as e:
             print(f"[run_all] Engagement monitor failed to start: {e}")
+
+    # Auto-start metrics collector if enabled
+    analytics_cfg = get_analytics_config()
+    if analytics_cfg.get("is_enabled"):
+        try:
+            from analytics.collector import metrics_collector
+            metrics_collector.start()
+            print("[run_all] Metrics collector started.")
+        except Exception as e:
+            print(f"[run_all] Metrics collector failed to start: {e}")
 
     # Run Flask (blocks the main thread)
     app = create_app()

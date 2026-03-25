@@ -258,6 +258,49 @@ def init_db():
         )
     """)
 
+    # --- Tweet metrics (engagement snapshots) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tweet_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tweet_id TEXT NOT NULL,
+            post_id INTEGER,
+            likes INTEGER DEFAULT 0,
+            retweets INTEGER DEFAULT 0,
+            replies INTEGER DEFAULT 0,
+            quotes INTEGER DEFAULT 0,
+            views INTEGER DEFAULT 0,
+            bookmarks INTEGER DEFAULT 0,
+            engagement_rate REAL DEFAULT 0,
+            collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tweet_metrics_tweet_id ON tweet_metrics(tweet_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tweet_metrics_collected_at ON tweet_metrics(collected_at)")
+
+    # --- Account metrics (daily snapshots) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS account_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            followers INTEGER DEFAULT 0,
+            following INTEGER DEFAULT 0,
+            tweets_count INTEGER DEFAULT 0,
+            listed_count INTEGER DEFAULT 0,
+            collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_metrics_collected_at ON account_metrics(collected_at)")
+
+    # --- Analytics config (singleton) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS analytics_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            is_enabled INTEGER DEFAULT 0,
+            collection_interval_hours INTEGER DEFAULT 12,
+            lookback_days INTEGER DEFAULT 30,
+            own_username TEXT DEFAULT ''
+        )
+    """)
+
     # Insert default configs if empty
     cursor.execute("INSERT OR IGNORE INTO schedule_config (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO quality_config (id) VALUES (1)")
@@ -265,6 +308,7 @@ def init_db():
     cursor.execute("INSERT OR IGNORE INTO engagement_config (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO usage_limits (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO kill_switch (id) VALUES (1)")
+    cursor.execute("INSERT OR IGNORE INTO analytics_config (id) VALUES (1)")
 
     # Seed topic categories
     default_categories = [
@@ -1373,3 +1417,297 @@ def reset_consecutive_errors():
     cursor.execute("UPDATE usage_limits SET current_consecutive_errors = 0 WHERE id = 1")
     conn.commit()
     conn.close()
+
+
+# --- Analytics Config ---
+
+def get_analytics_config():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM analytics_config WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {
+        "is_enabled": 0,
+        "collection_interval_hours": 12,
+        "lookback_days": 30,
+        "own_username": "",
+    }
+
+
+def update_analytics_config(**kwargs):
+    conn = get_connection()
+    cursor = conn.cursor()
+    allowed = ["is_enabled", "collection_interval_hours", "lookback_days", "own_username"]
+    sets = []
+    values = []
+    for key, val in kwargs.items():
+        if key in allowed:
+            sets.append(f"{key} = ?")
+            values.append(val)
+    if sets:
+        query = f"UPDATE analytics_config SET {', '.join(sets)} WHERE id = 1"
+        cursor.execute(query, values)
+        conn.commit()
+    conn.close()
+
+
+# --- Tweet & Account Metrics (write) ---
+
+def save_tweet_metrics(tweet_id, post_id, likes, retweets, replies, quotes, views, bookmarks=0):
+    engagement_rate = 0.0
+    if views and views > 0:
+        engagement_rate = (likes + retweets + replies + quotes) / views * 100
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO tweet_metrics
+           (tweet_id, post_id, likes, retweets, replies, quotes, views, bookmarks, engagement_rate)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (tweet_id, post_id, likes, retweets, replies, quotes, views, bookmarks, engagement_rate),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_account_metrics(followers, following, tweets_count=0, listed_count=0):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO account_metrics (followers, following, tweets_count, listed_count)
+           VALUES (?, ?, ?, ?)""",
+        (followers, following, tweets_count, listed_count),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_posted_tweets_with_ids(days=30):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT id, x_tweet_id, content, post_type, posted_at
+           FROM posts
+           WHERE status = 'posted' AND x_tweet_id IS NOT NULL
+             AND posted_at >= datetime('now', ?)
+           ORDER BY posted_at DESC""",
+        (f"-{days} days",),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Tweet & Account Metrics (read/aggregation) ---
+
+_LATEST_METRICS_SUBQUERY = """
+    (SELECT tweet_id, MAX(collected_at) AS max_ca
+     FROM tweet_metrics GROUP BY tweet_id) latest
+"""
+
+
+def get_latest_tweet_metrics():
+    """Return the most recent metrics snapshot for each tweet, joined with post data."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT tm.tweet_id, tm.likes, tm.retweets, tm.replies, tm.quotes,
+               tm.views, tm.bookmarks, tm.engagement_rate, tm.collected_at,
+               p.id AS post_id, p.content, p.post_type, p.posted_at,
+               p.quality_score, p.has_image
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+        LEFT JOIN posts p ON tm.post_id = p.id
+        ORDER BY p.posted_at DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_engagement_by_post_type():
+    """Return average engagement metrics grouped by post_type."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT p.post_type,
+               AVG(tm.likes) AS avg_likes,
+               AVG(tm.retweets) AS avg_retweets,
+               AVG(tm.replies) AS avg_replies,
+               AVG(tm.views) AS avg_views,
+               AVG(tm.engagement_rate) AS avg_engagement_rate,
+               COUNT(DISTINCT tm.tweet_id) AS tweet_count
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+        JOIN posts p ON tm.post_id = p.id
+        WHERE p.post_type IS NOT NULL
+        GROUP BY p.post_type
+        ORDER BY avg_engagement_rate DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_engagement_heatmap_data():
+    """Return average engagement by hour of day and day of week."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT CAST(strftime('%w', p.posted_at) AS INTEGER) AS day_of_week,
+               CAST(strftime('%H', p.posted_at) AS INTEGER) AS hour,
+               AVG(tm.engagement_rate) AS avg_engagement,
+               COUNT(*) AS count
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+        JOIN posts p ON tm.post_id = p.id
+        WHERE p.posted_at IS NOT NULL
+        GROUP BY day_of_week, hour
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_follower_history(days=30):
+    """Return account metrics history for the given period."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT followers, following, tweets_count, listed_count, collected_at
+           FROM account_metrics
+           WHERE collected_at >= datetime('now', ?)
+           ORDER BY collected_at ASC""",
+        (f"-{days} days",),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_engagement_over_time(days=30):
+    """Return daily aggregated engagement trends."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT DATE(collected_at) AS date,
+                  AVG(likes) AS avg_likes,
+                  AVG(retweets) AS avg_retweets,
+                  AVG(replies) AS avg_replies,
+                  AVG(engagement_rate) AS avg_engagement_rate,
+                  SUM(views) AS total_views
+           FROM tweet_metrics
+           WHERE collected_at >= datetime('now', ?)
+           GROUP BY DATE(collected_at)
+           ORDER BY date ASC""",
+        (f"-{days} days",),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_top_tweets(limit=5, metric="likes"):
+    """Return top N tweets by a chosen metric (latest snapshot)."""
+    allowed_metrics = {"likes", "retweets", "replies", "views", "engagement_rate"}
+    if metric not in allowed_metrics:
+        metric = "likes"
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT tm.tweet_id, tm.likes, tm.retweets, tm.replies, tm.quotes,
+               tm.views, tm.engagement_rate,
+               p.content, p.post_type, p.posted_at
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+        LEFT JOIN posts p ON tm.post_id = p.id
+        ORDER BY tm.{metric} DESC
+        LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_flop_tweets(limit=5):
+    """Return lowest engagement_rate tweets with views > 100."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT tm.tweet_id, tm.likes, tm.retweets, tm.replies, tm.quotes,
+               tm.views, tm.engagement_rate,
+               p.content, p.post_type, p.posted_at
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+        LEFT JOIN posts p ON tm.post_id = p.id
+        WHERE tm.views > 100
+        ORDER BY tm.engagement_rate ASC
+        LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_quality_vs_engagement():
+    """Return quality_score vs engagement_rate for correlation analysis."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(f"""
+        SELECT p.quality_score, tm.engagement_rate, tm.likes, tm.views, p.post_type
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+        JOIN posts p ON tm.post_id = p.id
+        WHERE p.quality_score IS NOT NULL
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_analytics_summary():
+    """Return aggregated KPI card data."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Total tracked tweets and averages
+    cursor.execute(f"""
+        SELECT COUNT(DISTINCT tm.tweet_id) AS total_tweets,
+               AVG(tm.engagement_rate) AS avg_engagement_rate,
+               SUM(tm.views) AS total_views,
+               AVG(tm.likes) AS avg_likes,
+               AVG(tm.retweets) AS avg_retweets
+        FROM tweet_metrics tm
+        INNER JOIN {_LATEST_METRICS_SUBQUERY}
+            ON tm.tweet_id = latest.tweet_id AND tm.collected_at = latest.max_ca
+    """)
+    metrics_row = cursor.fetchone()
+    summary = dict(metrics_row) if metrics_row else {
+        "total_tweets": 0, "avg_engagement_rate": 0, "total_views": 0,
+        "avg_likes": 0, "avg_retweets": 0,
+    }
+
+    # Latest follower count
+    cursor.execute("SELECT followers, following FROM account_metrics ORDER BY collected_at DESC LIMIT 1")
+    latest = cursor.fetchone()
+    summary["followers"] = latest["followers"] if latest else 0
+    summary["following"] = latest["following"] if latest else 0
+
+    # Follower growth (7 days)
+    cursor.execute("SELECT followers FROM account_metrics WHERE collected_at >= datetime('now', '-7 days') ORDER BY collected_at ASC LIMIT 1")
+    week_ago = cursor.fetchone()
+    if week_ago and latest:
+        summary["follower_growth_7d"] = latest["followers"] - week_ago["followers"]
+    else:
+        summary["follower_growth_7d"] = 0
+
+    conn.close()
+    return summary

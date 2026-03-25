@@ -1,8 +1,12 @@
 import os
+import threading
 
 import twikit
 
 import config
+
+# Lock for thread-safe access to the twikit client (shared by EngagementMonitor and MetricsCollector)
+twikit_lock = threading.Lock()
 
 COOKIES_PATH = os.getenv(
     "TWIKIT_COOKIES_PATH",
