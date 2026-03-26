@@ -440,8 +440,9 @@ def init_db():
         ("posts", "poll_options", "TEXT"),
         ("posts", "image_hint", "TEXT"),
         # New: expanded scoring weights
-        ("quality_config", "weight_substance", "REAL DEFAULT 0.30"),
-        ("quality_config", "weight_variety", "REAL DEFAULT 0.25"),
+        ("quality_config", "weight_substance", "REAL DEFAULT 0.25"),
+        ("quality_config", "weight_variety", "REAL DEFAULT 0.20"),
+        ("quality_config", "weight_vibes", "REAL DEFAULT 0.20"),
     ]
     for table, column, col_type in migrations:
         if not _column_exists(cursor, table, column):

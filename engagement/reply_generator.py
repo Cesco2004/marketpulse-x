@@ -179,8 +179,11 @@ def generate_reply(original_tweet_text, target_username, reply_style="mixed", ma
 
     response = client.chat.complete(
         model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.8,
+        messages=[
+            {"role": "system", "content": config.SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.85,
     )
 
     raw_text = response.choices[0].message.content

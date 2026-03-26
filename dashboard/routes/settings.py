@@ -55,12 +55,14 @@ def save_quality_config():
 
     # Weights
     try:
-        w_ai = float(form.get("weight_ai", 0.35))
-        w_read = float(form.get("weight_readability", 0.35))
-        w_emoji = float(form.get("weight_emoji", 0.30))
-        total = w_ai + w_read + w_emoji
+        w_ai = float(form.get("weight_ai", 0.15))
+        w_vibes = float(form.get("weight_vibes", 0.20))
+        w_read = float(form.get("weight_readability", 0.10))
+        w_emoji = float(form.get("weight_emoji", 0.10))
+        total = w_ai + w_vibes + w_read + w_emoji
         if total > 0:
             updates["weight_ai"] = round(w_ai / total, 2)
+            updates["weight_vibes"] = round(w_vibes / total, 2)
             updates["weight_readability"] = round(w_read / total, 2)
             updates["weight_emoji"] = round(w_emoji / total, 2)
     except (ValueError, TypeError):

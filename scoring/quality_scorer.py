@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
         "harness", "leverage", "navigate", "unprecedented", "groundbreaking",
         "synergy", "deep dive", "robust", "seamlessly", "tapestry", "embark",
         "pivotal", "multifaceted", "notably", "essentially", "furthermore",
+        "transformative", "disruptive",
     ],
     "ai_emdash_penalty": 15,
     "ai_phrase_penalty": 10,
@@ -29,12 +30,13 @@ DEFAULT_CONFIG = {
         "\U0001f9e0", "\U0001f440", "\U0001f4c8", "\U0001f4a5", "\u2728",
         "\U0001f52c", "\U0001f310", "\U0001f4b0", "\U0001f916", "\U0001f512",
     ],
-    "emoji_leading_bonus": 50,
-    "weight_substance": 0.30,
-    "weight_variety": 0.25,
-    "weight_ai": 0.20,
-    "weight_readability": 0.15,
+    "emoji_leading_bonus": 25,
+    "weight_substance": 0.25,
+    "weight_variety": 0.20,
+    "weight_ai": 0.15,
+    "weight_readability": 0.10,
     "weight_emoji": 0.10,
+    "weight_vibes": 0.20,
     "min_quality_score": 50.0,
     "auto_reject_below": 30.0,
 }
@@ -307,24 +309,86 @@ def score_emoji_compliance(text, config=None):
     }
 
 
+def score_vibes(text, config=None):
+    """Score tweet for human voice / viral potential. Rewards casual, punchy writing."""
+    score = 50  # Start neutral
+    bonuses = []
+    penalties = []
+
+    clean = EMOJI_RE.sub("", text).strip()
+    text_lower = text.lower()
+    char_count = len(clean)
+
+    # Length sweet spot: 140-180 chars
+    if 140 <= char_count <= 180:
+        score += 20
+        bonuses.append("Sweet spot length 140-180 (+20)")
+    elif char_count <= 220:
+        score += 10
+        bonuses.append("Acceptable length <=220 (+10)")
+    elif char_count > 240:
+        score -= 20
+        penalties.append(f"Too long: {char_count} chars (-20)")
+
+    # Contractions bonus (human signal)
+    contractions = ["it's", "we're", "here's", "don't", "won't", "can't",
+                    "isn't", "that's", "what's", "doesn't", "they're"]
+    contraction_count = sum(1 for c in contractions if c in text_lower)
+    if contraction_count >= 2:
+        score += 15
+        bonuses.append(f"Multiple contractions ({contraction_count}) (+15)")
+    elif contraction_count == 1:
+        score += 8
+        bonuses.append("Contraction used (+8)")
+
+    # Question ending bonus
+    if clean.rstrip().endswith("?"):
+        score += 15
+        bonuses.append("Ends with question (+15)")
+
+    # Casual language bonus (Grok guide phrases)
+    casual_phrases = [
+        "the thing is", "honestly", "damn", "lowkey", "fr ",
+        "the crazy part", "here's the deal", "turns out",
+        "apparently", "lol", "are we cooked", "or am i",
+        "ngl", "the wildest part",
+    ]
+    if any(p in text_lower for p in casual_phrases):
+        score += 10
+        bonuses.append("Casual voice (+10)")
+
+    # Community language bonus ("we", "us", "our")
+    if re.search(r"\b(we|us|our)\b", text_lower):
+        score += 5
+        bonuses.append("Community language (+5)")
+
+    # Natural pause bonus (ellipsis)
+    if "..." in text or "\u2026" in text:
+        score += 5
+        bonuses.append("Natural pause (+5)")
+
+    score = max(min(score, 100), 0)
+    return {
+        "score": score,
+        "bonuses": bonuses,
+        "penalties": penalties,
+        "details": f"{len(bonuses)} vibes signals, {len(penalties)} issues",
+    }
+
+
 # --- Generic closer patterns (AI-sounding kickers) ---
 GENERIC_CLOSERS = [
     r"the .+ race is on",
     r"will your .+ adapt",
     r"the future (is|of) .+",
     r"this changes everything",
-    r"are you ready\??",
     r"let that sink in",
-    r"think about (that|it)",
     r"and it'?s only the beginning",
     r"buckle up",
     r"the world (will never|is about to)",
     r"game over",
     r"welcome to the future",
-    r"the question is.{0,10}$",
-    r"that'?s (huge|massive|wild|insane)",
     r"(you'?re|we'?re) not ready",
-    r"sleep on this",
     r"mark my words",
 ]
 
@@ -645,12 +709,13 @@ def score_duplicate(text, existing_posts):
 def score_post(text, config=None, existing_posts=None):
     """Compute composite quality score for a tweet. Returns full breakdown.
 
-    5-component system:
-    - Substance (30%): Is the content specific and informative?
-    - Variety (25%): Different from recent tweets in structure and topic?
-    - Anti-AI (20%): Avoids AI-tell patterns
-    - Readability (15%): Accessible language
+    6-component system:
+    - Substance (25%): Is the content specific and informative?
+    - Vibes (20%): Does it sound human, casual, and viral?
+    - Variety (20%): Different from recent tweets in structure and topic?
+    - Anti-AI (15%): Avoids AI-tell patterns
     - Emoji/Format (10%): Correct formatting
+    - Readability (10%): Accessible language
     """
     cfg = _load_config(config)
 
@@ -659,19 +724,22 @@ def score_post(text, config=None, existing_posts=None):
     emoji = score_emoji_compliance(text, cfg)
     substance = score_substance(text, cfg)
     variety = score_variety(text, existing_posts or [], cfg)
+    vibes = score_vibes(text, cfg)
 
     # Legacy duplicate check (kept as hard blocker for near-duplicates)
     duplicate = score_duplicate(text, existing_posts or [])
 
-    # New 5-component weighting
-    w_substance = cfg.get("weight_substance", 0.30)
-    w_variety = cfg.get("weight_variety", 0.25)
-    w_ai = cfg.get("weight_ai", 0.20)
-    w_read = cfg.get("weight_readability", 0.15)
+    # 6-component weighting
+    w_substance = cfg.get("weight_substance", 0.25)
+    w_variety = cfg.get("weight_variety", 0.20)
+    w_ai = cfg.get("weight_ai", 0.15)
+    w_read = cfg.get("weight_readability", 0.10)
     w_emoji = cfg.get("weight_emoji", 0.10)
+    w_vibes = cfg.get("weight_vibes", 0.20)
 
     overall = (
         substance["score"] * w_substance
+        + vibes["score"] * w_vibes
         + variety["score"] * w_variety
         + ai["score"] * w_ai
         + readability["score"] * w_read
@@ -689,11 +757,13 @@ def score_post(text, config=None, existing_posts=None):
         substance["penalties"] + variety["penalties"]
         + ai["penalties"] + readability["penalties"]
         + emoji["penalties"] + duplicate["penalties"]
+        + vibes.get("penalties", [])
     )
 
     return {
         "overall": overall,
         "substance": substance,
+        "vibes": vibes,
         "variety": variety,
         "ai": ai,
         "readability": readability,

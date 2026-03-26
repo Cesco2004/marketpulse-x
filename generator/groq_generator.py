@@ -100,8 +100,11 @@ def generate_posts(articles_text, template_prompt=None, template_meta=None):
 
     response = client.chat.completions.create(
         model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
+        messages=[
+            {"role": "system", "content": config.SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.85,
     )
 
     raw_text = response.choices[0].message.content
