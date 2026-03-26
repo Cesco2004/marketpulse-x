@@ -17,7 +17,7 @@ from limiter.usage_limiter import usage_limiter
 # Groq handles high-volume/low-complexity tasks (free, 6000 req/day).
 TASK_ROUTING = {
     "rank_articles": "mistral",     # Low cost, precision matters
-    "generate_posts": "groq",       # Largest single call -> offload
+    "generate_posts": "mistral",    # Quality critical — Groq/Llama produces fragments
     "generate_reply": "mistral",    # Quality critical for engagement
     "moderation_check": "groq",     # High volume, binary output
 }

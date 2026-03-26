@@ -129,6 +129,11 @@ def search_pexels(keywords, api_key):
 
 def find_image_for_post(post_content, source_urls_json, image_config=None, exclude_urls=None):
     """Find the best image for a tweet, avoiding already-used images.
+
+    Strategy order depends on whether an image_hint was provided:
+    - With image_hint: stock photo search first (keywords are targeted), then article og:image
+    - Without image_hint: article og:image first, then stock photo search
+
     Returns (image_url, source_type) or (None, None).
     """
     if exclude_urls is None:
@@ -141,19 +146,18 @@ def find_image_for_post(post_content, source_urls_json, image_config=None, exclu
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Strategy 1: Extract from source articles (free, most relevant)
-    for url in source_urls[:5]:
-        if url:
-            img_url, source_type = extract_article_image(url)
-            if img_url and img_url not in exclude_urls:
-                return img_url, source_type
-
-    # Strategy 2: Stock photo search
-    keywords = extract_keywords(post_content)
-    if keywords and image_config:
+    # Determine available stock photo APIs
+    unsplash_key = ""
+    pexels_key = ""
+    if image_config:
         unsplash_key = image_config.get("unsplash_api_key", "") or getattr(config, "UNSPLASH_ACCESS_KEY", "")
         pexels_key = image_config.get("pexels_api_key", "") or getattr(config, "PEXELS_API_KEY", "")
+    has_stock_api = bool(unsplash_key or pexels_key)
 
+    keywords = extract_keywords(post_content)
+
+    # If stock photo APIs are available, try keyword search first (more targeted than og:image)
+    if has_stock_api and keywords:
         img_url = search_unsplash(keywords, unsplash_key)
         if img_url and img_url not in exclude_urls:
             return img_url, "unsplash"
@@ -161,6 +165,18 @@ def find_image_for_post(post_content, source_urls_json, image_config=None, exclu
         img_url = search_pexels(keywords, pexels_key)
         if img_url and img_url not in exclude_urls:
             return img_url, "pexels"
+
+    # Fallback: Extract from source articles
+    for url in source_urls[:5]:
+        if url:
+            img_url, source_type = extract_article_image(url)
+            if img_url and img_url not in exclude_urls:
+                return img_url, source_type
+
+    # Last resort: stock photo with broader keywords (if not tried above)
+    if not has_stock_api and keywords:
+        # No stock API keys — can't do keyword search
+        pass
 
     return None, None
 

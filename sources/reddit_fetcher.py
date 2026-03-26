@@ -1,4 +1,11 @@
-"""Fetch trending posts from Reddit via public JSON endpoints (no auth needed)."""
+"""Fetch trending posts from Reddit via OAuth API (works from cloud servers).
+
+Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env.
+Create a free app at https://www.reddit.com/prefs/apps (type: script).
+"""
+
+import os
+from datetime import datetime, timedelta
 
 import requests
 
@@ -10,32 +17,92 @@ DEFAULT_SUBREDDITS = [
     "startups",
 ]
 
-USER_AGENT = "QuantumBrief/1.0 (content aggregator)"
-
-# Thresholds
+BOT_NAME = "QuantumBrief"
 MIN_UPVOTES = 100
+
+# Module-level token cache
+_token_cache = {"access_token": None, "expires_at": None}
+
+
+def _get_oauth_token():
+    """Get Reddit OAuth token using client_credentials (app-only, no user login).
+
+    Caches token for 50 minutes (expires at 60).
+    """
+    # Return cached token if still valid
+    if _token_cache["access_token"] and _token_cache["expires_at"] and datetime.now() < _token_cache["expires_at"]:
+        return _token_cache["access_token"]
+
+    client_id = os.getenv("REDDIT_CLIENT_ID", "")
+    client_secret = os.getenv("REDDIT_CLIENT_SECRET", "")
+
+    if not client_id:
+        return None
+
+    try:
+        resp = requests.post(
+            "https://www.reddit.com/api/v1/access_token",
+            auth=(client_id, client_secret),
+            data={"grant_type": "client_credentials"},
+            headers={"User-Agent": f"{BOT_NAME}/1.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _token_cache["access_token"] = data["access_token"]
+        _token_cache["expires_at"] = datetime.now() + timedelta(seconds=3000)  # 50 min
+        return _token_cache["access_token"]
+    except Exception as e:
+        print(f"  Reddit OAuth failed: {e}")
+        return None
+
+
+def _fetch_subreddit_oauth(sub, token, limit=25):
+    """Fetch top posts from a subreddit using OAuth (oauth.reddit.com)."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": f"{BOT_NAME}/1.0",
+    }
+    url = f"https://oauth.reddit.com/r/{sub}/top.json"
+    resp = requests.get(url, headers=headers, params={"limit": limit, "t": "day"}, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fetch_subreddit_public(sub, limit=25):
+    """Fallback: fetch from public JSON endpoint (works from non-cloud IPs)."""
+    headers = {"User-Agent": f"{BOT_NAME}/1.0 (content aggregator)"}
+    url = f"https://old.reddit.com/r/{sub}/top/.json?t=day&limit={limit}"
+    resp = requests.get(url, headers=headers, timeout=15)
+    if resp.status_code == 403:
+        url = f"https://www.reddit.com/r/{sub}/top/.json?t=day&limit={limit}"
+        resp = requests.get(url, headers=headers, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def fetch_reddit(subreddits=None, limit=25, min_upvotes=MIN_UPVOTES):
     """Fetch top daily posts from configured subreddits.
 
+    Uses OAuth if credentials are set (works from cloud servers),
+    falls back to public JSON endpoint otherwise.
+
     Returns list of article dicts compatible with the pipeline.
     """
     subreddits = subreddits or DEFAULT_SUBREDDITS
-    headers = {"User-Agent": USER_AGENT}
+    token = _get_oauth_token()
     articles = []
 
     for sub in subreddits:
         try:
-            url = f"https://www.reddit.com/r/{sub}/top/.json?t=day&limit={limit}"
-            resp = requests.get(url, headers=headers, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
+            if token:
+                data = _fetch_subreddit_oauth(sub, token, limit)
+            else:
+                data = _fetch_subreddit_public(sub, limit)
 
             for post in data.get("data", {}).get("children", []):
                 post_data = post.get("data", {})
 
-                # Skip stickied, self-posts without substance, and low-score posts
                 if post_data.get("stickied"):
                     continue
                 upvotes = post_data.get("ups", 0)
@@ -48,14 +115,12 @@ def fetch_reddit(subreddits=None, limit=25, min_upvotes=MIN_UPVOTES):
                 num_comments = post_data.get("num_comments", 0)
                 permalink = post_data.get("permalink", "")
 
-                # Prefer external link; fall back to reddit permalink
                 link = post_url if post_url and not post_url.startswith("https://www.reddit.com") else f"https://www.reddit.com{permalink}"
 
-                # Build a useful summary from selftext or title (never just upvote counts)
                 if selftext and len(selftext.strip()) > 30:
                     summary = selftext
                 else:
-                    summary = title  # Title is the content for link posts
+                    summary = title
 
                 articles.append({
                     "title": title,

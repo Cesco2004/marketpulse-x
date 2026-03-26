@@ -14,16 +14,26 @@ from publisher.x_publisher import post_tweet
 
 
 class QuantumScheduler:
-    """Background scheduler that pre-computes real post times and posts at those times.
+    """Background scheduler with full autopilot: auto-fetch, auto-approve, auto-post.
 
-    Schedules across multiple days: if the queue has more posts than the daily
-    cap, the overflow is automatically scheduled for the next day(s).
+    When started, runs a continuous loop:
+    1. Check if queue has enough approved posts
+    2. If not, trigger fetch+generate pipeline (auto-approves best tweets)
+    3. Compute posting schedule for the day
+    4. Post at scheduled times
+    5. Repeat
     """
+
+    # How often to check for new content (minutes)
+    FETCH_INTERVAL_MINUTES = 120  # Every 2 hours
+    # Minimum approved posts before triggering a fetch
+    MIN_QUEUE_SIZE = 5
 
     def __init__(self):
         self._thread = None
         self._stop_event = threading.Event()
         self._schedule = []  # list of (datetime_utc, post_id)
+        self._last_fetch = None
 
     @property
     def is_running(self):
@@ -39,7 +49,7 @@ class QuantumScheduler:
         if self.is_running:
             return
         self._stop_event.clear()
-        self._compute_schedule()
+        self._last_fetch = None
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         update_schedule_config(is_active=1)
@@ -50,13 +60,47 @@ class QuantumScheduler:
         clear_all_scheduled_times()
         update_schedule_config(is_active=0)
 
-    def _compute_schedule(self):
-        """Pre-compute post times across multiple days, respecting daily limits.
+    def _should_fetch(self):
+        """Determine if we should trigger a fetch+generate cycle."""
+        # Always fetch if never fetched
+        if self._last_fetch is None:
+            return True
 
-        Splits the queue into daily batches (max_per_day each) and distributes
-        each batch across that day's active window. Gaps are auto-adjusted if
-        the configured gaps can't fit the batch in the window.
-        """
+        # Fetch if queue is low
+        queue = get_approved_posts()
+        if len(queue) < self.MIN_QUEUE_SIZE:
+            return True
+
+        # Fetch if enough time has passed since last fetch
+        elapsed = (datetime.utcnow() - self._last_fetch).total_seconds() / 60
+        if elapsed >= self.FETCH_INTERVAL_MINUTES:
+            return True
+
+        return False
+
+    def _auto_fetch(self):
+        """Run the fetch+generate pipeline. Auto-approves tweets above threshold."""
+        try:
+            from pipeline import run_fetch_pipeline
+            print(f"[Autopilot] Fetching new content...")
+            result = run_fetch_pipeline()
+            self._last_fetch = datetime.utcnow()
+
+            if result.get("skipped_reason"):
+                print(f"[Autopilot] Skipped: {result['skipped_reason']}")
+            elif result.get("posts"):
+                print(f"[Autopilot] Generated {len(result['posts'])} posts. "
+                      f"Auto-approved: {result.get('auto_approved', 0)}, "
+                      f"Rejected: {result.get('auto_rejected', 0)}")
+            if result.get("errors"):
+                for err in result["errors"]:
+                    print(f"[Autopilot] Error: {err}")
+        except Exception as e:
+            print(f"[Autopilot] Fetch error: {e}")
+            self._last_fetch = datetime.utcnow()  # Don't retry immediately on error
+
+    def _compute_schedule(self):
+        """Pre-compute post times for today, respecting daily limits."""
         config = get_schedule_config()
         all_posts = get_approved_posts()
 
@@ -64,15 +108,19 @@ class QuantumScheduler:
             self._schedule = []
             return
 
-        # Daily cap = min(schedule "tweets per day", safety limit)
+        # Daily cap
         limits = get_usage_limits()
         safety_cap = limits.get("x_max_tweets_per_day", 15)
-        schedule_cap = config.get("random_tweets_per_day", 999) if config["mode"] == "random" else 999
+        schedule_cap = config.get("random_tweets_per_day", 20) if config["mode"] == "random" else 999
         max_per_day = min(safety_cap, schedule_cap)
 
-        # For today, subtract already-posted tweets
+        # Subtract already-posted today
         already_posted_today = get_daily_tweet_count()
         remaining_today = max(0, max_per_day - already_posted_today)
+
+        if remaining_today == 0:
+            self._schedule = []
+            return
 
         tz_name = config.get("timezone", "Europe/Paris")
         try:
@@ -83,37 +131,13 @@ class QuantumScheduler:
         now_utc = datetime.utcnow()
         now_local = pytz.utc.localize(now_utc).astimezone(tz)
 
-        # Split posts into daily batches
-        batches = []
-        remaining_posts = list(all_posts)
-
-        # Day 0 (today): limited by already-posted count
-        today_batch = remaining_posts[:remaining_today]
-        remaining_posts = remaining_posts[remaining_today:]
-        if today_batch:
-            batches.append((0, today_batch))
-
-        # Day 1, 2, 3... : full max_per_day each
-        day = 1
-        while remaining_posts:
-            batch = remaining_posts[:max_per_day]
-            remaining_posts = remaining_posts[max_per_day:]
-            batches.append((day, batch))
-            day += 1
-
-        total_scheduled = sum(len(b) for _, b in batches)
-        days_needed = len(batches)
-        print(f"[Scheduler] Scheduling {total_scheduled}/{len(all_posts)} posts across {days_needed} day(s) (max {max_per_day}/day, {already_posted_today} already posted today)")
-
-        schedule = []
-
-        for day_offset, posts in batches:
-            day_schedule = self._schedule_day(
-                posts, config, tz, now_local, day_offset, is_today=(day_offset == 0),
-            )
-            schedule.extend(day_schedule)
+        # Only schedule for today (autopilot will refill queue and reschedule tomorrow)
+        today_batch = all_posts[:remaining_today]
+        schedule = self._schedule_day(today_batch, config, tz, now_local, 0, is_today=True)
 
         self._schedule = schedule
+        if schedule:
+            print(f"[Autopilot] Scheduled {len(schedule)} posts for today ({already_posted_today} already posted, {max_per_day} max)")
 
     def _schedule_day(self, posts, config, tz, now_local, day_offset, is_today):
         """Schedule a batch of posts for a single day. Returns list of (utc_time, post_id)."""
@@ -124,7 +148,6 @@ class QuantumScheduler:
         end_hour = config.get("random_end_hour", 22)
         end_minute = config.get("random_end_minute", 0)
 
-        # Build the active window for this day
         base_day = now_local + timedelta(days=day_offset)
         window_start = base_day.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
         window_end = base_day.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
@@ -134,11 +157,7 @@ class QuantumScheduler:
             if interval_minutes < 1:
                 interval_minutes = 1
 
-            # For today, start from now; for future days, start from window start
-            if is_today:
-                cursor = max(now_local, window_start)
-            else:
-                cursor = window_start
+            cursor = max(now_local, window_start) if is_today else window_start
 
             for post in posts:
                 cursor = cursor + timedelta(minutes=interval_minutes)
@@ -147,23 +166,16 @@ class QuantumScheduler:
                 set_post_scheduled_at(post["id"], post_time_utc.isoformat())
 
         else:  # random
-            min_gap = config.get("random_min_gap_hours", 0) * 60 + config.get("random_min_gap_minutes", 0)
-            max_gap = config.get("random_max_gap_hours", 0) * 60 + config.get("random_max_gap_minutes", 0)
+            min_gap = config.get("random_min_gap_hours", 0) * 60 + config.get("random_min_gap_minutes", 5)
+            max_gap = config.get("random_max_gap_hours", 1) * 60 + config.get("random_max_gap_minutes", 0)
             if min_gap < 1:
                 min_gap = 1
             if max_gap <= min_gap:
                 max_gap = min_gap + 1
 
-            # Effective start for this day
-            if is_today:
-                effective_start = max(now_local, window_start)
-            else:
-                effective_start = window_start
-
-            # Available minutes in this day's window
+            effective_start = max(now_local, window_start) if is_today else window_start
             available_minutes = (window_end - effective_start).total_seconds() / 60
 
-            # Auto-adjust gaps to fit all posts in the window
             n = len(posts)
             day_min_gap = min_gap
             day_max_gap = max_gap
@@ -174,17 +186,13 @@ class QuantumScheduler:
                     even_gap = max(1, int(available_minutes / n))
                     day_min_gap = max(1, even_gap - 5)
                     day_max_gap = even_gap + 5
-                    label = "today" if is_today else f"day +{day_offset}"
-                    print(f"[Scheduler] Auto-adjusted gaps to {day_min_gap}-{day_max_gap}min for {label} ({n} tweets in {available_minutes:.0f}min)")
                 elif day_max_gap * (n - 1) > available_minutes:
                     day_max_gap = max(day_min_gap + 1, int(available_minutes / (n - 1)))
 
-            # First post: small random gap from start
             first_gap = random.randint(day_min_gap, min(day_max_gap, day_min_gap + 15))
             cursor = effective_start + timedelta(minutes=first_gap)
 
             for post in posts:
-                # Clamp to window
                 if cursor > window_end:
                     cursor = window_end - timedelta(minutes=1)
                 if cursor < effective_start:
@@ -200,33 +208,56 @@ class QuantumScheduler:
         return schedule
 
     def _run_loop(self):
-        """Wait for each scheduled time and post."""
-        while not self._stop_event.is_set() and self._schedule:
-            next_time_utc, post_id = self._schedule[0]
+        """Main autopilot loop: fetch → schedule → post → repeat."""
+        while not self._stop_event.is_set():
+            try:
+                # Step 1: Auto-fetch if queue is low or enough time has passed
+                if self._should_fetch():
+                    self._auto_fetch()
 
-            # Wait until it's time
-            while not self._stop_event.is_set():
-                now = datetime.utcnow()
-                remaining = (next_time_utc - now).total_seconds()
-                if remaining <= 0:
+                # Step 2: Compute today's schedule if empty
+                if not self._schedule:
+                    self._compute_schedule()
+
+                # Step 3: If still no posts, wait and retry
+                if not self._schedule:
+                    print("[Autopilot] No approved posts. Waiting 30min before next fetch...")
+                    self._stop_event.wait(timeout=1800)  # Wait 30 minutes
+                    self._last_fetch = None  # Force a fetch on next loop
+                    continue
+
+                # Step 4: Wait for next post time
+                next_time_utc, post_id = self._schedule[0]
+
+                while not self._stop_event.is_set():
+                    now = datetime.utcnow()
+                    remaining = (next_time_utc - now).total_seconds()
+                    if remaining <= 0:
+                        break
+                    # Check every 15s, but also check if we need to fetch
+                    time.sleep(min(15, remaining))
+
+                if self._stop_event.is_set():
                     break
-                time.sleep(min(15, remaining))
 
-            if self._stop_event.is_set():
-                break
+                # Step 5: Post
+                self._schedule.pop(0)
+                post = get_post_by_id(post_id)
+                if post and post["status"] == "approved":
+                    try:
+                        from pipeline import publish_post
+                        tweet_id, has_image = publish_post(post)
+                        mark_as_posted(post_id, tweet_id)
+                        img_tag = " (with image)" if has_image else ""
+                        print(f"[Autopilot] Posted #{post_id}{img_tag} -> tweet {tweet_id}")
+                    except Exception as e:
+                        print(f"[Autopilot] Error posting #{post_id}: {e}")
 
-            # Post it
-            self._schedule.pop(0)
-            post = get_post_by_id(post_id)
-            if post and post["status"] == "approved":
-                try:
-                    from pipeline import publish_post
-                    tweet_id, _ = publish_post(post)
-                    mark_as_posted(post_id, tweet_id)
-                except Exception as e:
-                    print(f"[Scheduler] Error posting #{post_id}: {e}")
+            except Exception as e:
+                print(f"[Autopilot] Loop error: {e}")
+                self._stop_event.wait(timeout=60)  # Wait 1 min on error
 
-        # Done - all posted or stopped
+        # Stopped
         if not self._stop_event.is_set():
             update_schedule_config(is_active=0)
 

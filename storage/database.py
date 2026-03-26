@@ -311,7 +311,8 @@ def init_db():
             is_enabled INTEGER DEFAULT 1,
             priority INTEGER DEFAULT 2,
             topic_weight REAL DEFAULT 1.0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_type, config_value)
         )
     """)
 

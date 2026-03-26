@@ -117,6 +117,9 @@ def run_fetch_pipeline():
         final_text = format_articles_for_prompt(selected)
         posts = generate_posts(final_text)
 
+        # Step 4b: Filter out posts that are too long or too short for Twitter
+        posts = [p for p in posts if 20 < len(p["content"]) <= 280]
+
         # Step 5: Score each post (with duplicate detection)
         quality_config = get_quality_config()
 

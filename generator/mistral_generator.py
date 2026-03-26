@@ -114,13 +114,11 @@ def generate_posts(articles_text, template_prompt=None, template_meta=None):
 
 
 def _extract_image_hint(text):
-    """Extract IMAGE_HINT from text and return (cleaned_text, hint)."""
-    match = re.search(r"\n?IMAGE_HINT:\s*(.+?)(?:\n|$)", text, re.IGNORECASE)
-    if match:
-        hint = match.group(1).strip().strip("[]")
-        cleaned = text[:match.start()] + text[match.end():]
-        return cleaned.strip(), hint
-    return text.strip(), None
+    """Extract all IMAGE_HINT lines from text and return (cleaned_text, first_hint)."""
+    hints = re.findall(r"IMAGE_HINT:\s*(.+?)(?:\n|$)", text, re.IGNORECASE)
+    cleaned = re.sub(r"\n?IMAGE_HINT:\s*.+?(?:\n|$)", "\n", text, flags=re.IGNORECASE).strip()
+    hint = hints[0].strip().strip("[]") if hints else None
+    return cleaned, hint
 
 
 def _clean_post_content(content):
@@ -243,6 +241,39 @@ def parse_posts(raw_text, template_meta=None):
         if content and len(content) > 10:
             post_type = post_types[i] if i < len(post_types) else "other"
             posts.append({"content": content, "type": post_type, "image_hint": hint})
+
+    if posts:
+        return posts
+
+    # Last resort: split by leading emoji on a new line
+    # Each tweet typically starts with an emoji — use that as delimiter
+    emoji_split = re.split(
+        r"\n(?="
+        r"[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+        r"\U0001F900-\U0001F9FF\U0001FA00-\U0001FAFF\u2600-\u27BF\u2300-\u23FF]"
+        r")",
+        raw_text.strip(),
+    )
+    for i, chunk in enumerate(emoji_split):
+        content, hint = _extract_image_hint(chunk)
+        content = _clean_post_content(content)
+        if content and len(content) > 20:
+            post_type = post_types[i] if i < len(post_types) else "other"
+            posts.append({"content": content, "type": post_type, "image_hint": hint})
+
+    # If still one giant blob, force-split any post over 300 chars
+    if len(posts) == 1 and len(posts[0]["content"]) > 300:
+        blob = posts[0]["content"]
+        # Try splitting on double newlines
+        parts = [p.strip() for p in re.split(r"\n\s*\n", blob) if p.strip()]
+        if len(parts) >= 2:
+            posts = []
+            for i, part in enumerate(parts):
+                part, hint = _extract_image_hint(part)
+                part = _clean_post_content(part)
+                if part and len(part) > 20:
+                    post_type = post_types[i] if i < len(post_types) else "other"
+                    posts.append({"content": part, "type": post_type, "image_hint": hint})
 
     return posts
 

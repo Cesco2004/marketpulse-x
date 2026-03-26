@@ -14,6 +14,56 @@
 </div>
 {% endif %}
 
+<!-- AUTOPILOT CONTROL -->
+<div id="autopilot-widget" hx-get="/api/autopilot/status" hx-trigger="every 15s" hx-swap="innerHTML"
+     style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;margin-bottom:1.25rem">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem">
+        <div>
+            <div style="font-size:1.1rem;font-weight:700;display:flex;align-items:center;gap:0.5rem">
+                <span class="process-dot {{ 'active' if scheduler_active else 'inactive' }}" style="width:10px;height:10px"></span>
+                Autopilot {% if scheduler_active %}<span style="color:var(--green);font-size:0.8rem">RUNNING</span>{% else %}<span style="color:var(--text-tertiary);font-size:0.8rem">STOPPED</span>{% endif %}
+            </div>
+            {% if scheduler_active and next_post_time %}
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:0.25rem">
+                Next post: {{ next_post_time }} &middot; {{ tweets_today }} tweets posted today
+            </div>
+            {% elif scheduler_active %}
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:0.25rem">
+                Fetching content & building queue... &middot; {{ tweets_today }} tweets posted today
+            </div>
+            {% else %}
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:0.25rem">
+                Press Start to begin automatic fetching, generating & posting
+            </div>
+            {% endif %}
+        </div>
+        <button class="{% if scheduler_active %}btn-stop{% else %}btn-start{% endif %}"
+                hx-post="/api/autopilot/toggle" hx-target="#autopilot-widget" hx-swap="innerHTML"
+                style="padding:0.5rem 1.8rem;border-radius:8px;font-weight:700;font-size:0.95rem;border:none;cursor:pointer;
+                       {% if scheduler_active %}background:var(--red,#ef4444);color:white{% else %}background:var(--accent,#3b82f6);color:white{% endif %}">
+            {% if scheduler_active %}Stop{% else %}Start{% endif %}
+        </button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;font-size:0.78rem;text-align:center">
+        <div style="background:var(--bg-secondary);border-radius:6px;padding:0.4rem">
+            <div style="font-weight:700;font-size:1.05rem">{{ schedule_config.random_tweets_per_day }}</div>
+            <div style="color:var(--text-secondary)">tweets/day</div>
+        </div>
+        <div style="background:var(--bg-secondary);border-radius:6px;padding:0.4rem">
+            <div style="font-weight:700;font-size:1.05rem">{{ stats.get('approved', 0) }}</div>
+            <div style="color:var(--text-secondary)">in queue</div>
+        </div>
+        <div style="background:var(--bg-secondary);border-radius:6px;padding:0.4rem">
+            <div style="font-weight:700;font-size:1.05rem">{{ tweets_today }}</div>
+            <div style="color:var(--text-secondary)">posted today</div>
+        </div>
+        <div style="background:var(--bg-secondary);border-radius:6px;padding:0.4rem">
+            <div style="font-weight:700;font-size:1.05rem">{{ stats.get('posted', 0) }}</div>
+            <div style="color:var(--text-secondary)">total posted</div>
+        </div>
+    </div>
+</div>
+
 <!-- Stats cards -->
 <div class="stats-grid">
     <div class="stat-card">
@@ -109,10 +159,6 @@
         <div class="progress-track" style="margin:0.4rem 0">
             <div class="progress-fill" style="width:{{ [mistral_budget.pct_used, 100]|min }}%;background:{% if mistral_budget.pct_used < 60 %}var(--green){% elif mistral_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
         </div>
-        <div class="usage-detail">
-            {% if mistral_budget.pace_status == "on_track" %}On track{% elif mistral_budget.pace_status == "ahead" %}Ahead of pace{% elif mistral_budget.pace_status == "critical" %}Critical{% else %}Exhausted{% endif %}
-            &middot; Projected: {{ "{:,}".format(mistral_budget.projected_end_of_month) }} by month end
-        </div>
         <div class="usage-detail">{{ mistral_budget.days_remaining }} days remaining &middot; ~{{ "{:,}".format(mistral_budget.recommended_daily_cap) }} tokens/day recommended</div>
     </div>
     <div class="usage-card">
@@ -122,48 +168,18 @@
         <div class="progress-track" style="margin:0.4rem 0">
             <div class="progress-fill" style="width:{{ [groq_budget.pct_used, 100]|min }}%;background:{% if groq_budget.pct_used < 60 %}var(--green){% elif groq_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
         </div>
-        <div class="usage-detail">
-            {% if groq_budget.tokens_used == 0 %}Ready &middot; No calls yet this month{% else %}{{ groq_budget.days_remaining }} days remaining{% endif %}
-        </div>
     </div>
 </div>
 
-<!-- API Usage Summary -->
-<div class="section-title">API Usage (Today)</div>
-<div class="usage-grid">
-    <div class="usage-card">
-        <h4>Mistral</h4>
-        <div class="usage-number">{{ "{:,}".format(usage.mistral_today_tokens|default(0)) }}</div>
-        <div class="usage-detail">tokens today</div>
-        <div class="usage-detail">{{ usage.mistral_today_calls|default(0) }} calls &middot; ~{{ "%.4f"|format(usage.mistral_today_cost|default(0)) }} EUR</div>
-    </div>
-    <div class="usage-card">
-        <h4>Groq</h4>
-        <div class="usage-number">{{ "{:,}".format(usage.groq_today_tokens|default(0)) }}</div>
-        <div class="usage-detail">tokens today</div>
-        <div class="usage-detail">{{ usage.groq_today_calls|default(0) }} calls &middot; Free tier</div>
-    </div>
-    <div class="usage-card">
-        <h4>X / Twitter</h4>
-        <div class="usage-number">{{ usage.x_today_posts|default(0) }}</div>
-        <div class="usage-detail">tweets today</div>
-        <div class="usage-detail">~{{ "%.4f"|format(usage.x_today_cost|default(0)) }} USD est.</div>
-    </div>
-</div>
-
-<!-- Actions -->
-<div class="section-title">Quick Actions</div>
+<!-- Quick Actions (kept as manual override) -->
+<div class="section-title">Manual Actions</div>
 <div class="action-buttons">
     <button class="btn-fetch" hx-post="/api/fetch" hx-target="#action-result" hx-indicator="#fetch-spinner" hx-disabled-elt="this">
         Fetch & Generate
     </button>
-    <button class="btn-post" hx-post="/api/post-next" hx-target="#action-result" hx-confirm="Post the next approved tweet?" hx-disabled-elt="this">
-        Post Next Tweet
-    </button>
     <span id="fetch-spinner" class="htmx-indicator" style="font-size:0.8rem;color:var(--text-secondary)">
-        Fetching RSS feeds & generating posts...
+        Fetching & generating...
     </span>
 </div>
-
 <div id="action-result"></div>
 {% endblock %}
