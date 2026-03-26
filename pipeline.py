@@ -14,10 +14,11 @@ from storage.database import (
     get_image_config,
     update_post_status,
 )
-from sources.rss_fetcher import fetch_all_feeds, fetch_all_feeds_from_db, keyword_prefilter, format_articles_for_prompt
+from sources.rss_fetcher import keyword_prefilter, format_articles_for_prompt
+from sources.aggregator import fetch_all_sources
 from generator.provider_router import rank_articles, generate_posts
 from generator.mistral_generator import get_batch_id
-from publisher.x_publisher import post_tweet
+from publisher.x_publisher import post_tweet, publish_thread
 from scoring.quality_scorer import score_post
 from limiter import UsageLimitReached
 
@@ -42,14 +43,12 @@ def run_fetch_pipeline():
         "errors": [],
     }
 
-    # Step 1: Fetch RSS (from DB feeds if available, fallback to config)
+    # Step 1: Fetch from all sources (RSS + HackerNews + Reddit, with cross-source dedup)
     try:
-        articles = fetch_all_feeds_from_db()
-        if not articles:
-            articles = fetch_all_feeds()
+        articles = fetch_all_sources()
         result["articles_fetched"] = len(articles)
     except Exception as e:
-        result["errors"].append(f"RSS fetch failed: {e}")
+        result["errors"].append(f"Source fetch failed: {e}")
         return result
 
     if not articles:
@@ -141,6 +140,8 @@ def run_fetch_pipeline():
                 "penalties": scores["penalties"],
                 "auto_reject": scores["auto_reject"],
                 "below_minimum": scores["below_minimum"],
+                "substance": scores.get("substance", {}).get("score"),
+                "variety": scores.get("variety", {}).get("score"),
             })
             # Add this post to history so next posts in batch also check against it
             history.append({"content": post["content"]})
@@ -214,8 +215,11 @@ def _attach_images_to_posts(posts, source_ids):
                 start = i % num_sources
                 rotated_sources = source_ids[start:] + source_ids[:start]
 
+            # Use image_hint from LLM if available for better search keywords
+            search_text = post.get("image_hint") or post["content"]
+
             img_url, img_source = find_image_for_post(
-                post["content"], json.dumps(rotated_sources), image_config,
+                search_text, json.dumps(rotated_sources), image_config,
                 exclude_urls=used_image_urls,
             )
             if not img_url:
@@ -238,7 +242,7 @@ def _attach_images_to_posts(posts, source_ids):
 
 
 def publish_post(post):
-    """Publish a single post with optional image. Returns (tweet_id, has_image).
+    """Publish a single post with optional image, poll, or thread. Returns (tweet_id, has_image).
     Accepts both dict and sqlite3.Row objects.
     """
     # Convert sqlite3.Row to dict if needed
@@ -255,8 +259,38 @@ def publish_post(post):
         except Exception:
             media_ids = None  # Fall back to text-only
 
-    tweet_id = post_tweet(post["content"], media_ids=media_ids)
+    # Handle poll tweets
+    poll_options = None
+    if post.get("poll_options"):
+        try:
+            poll_options = json.loads(post["poll_options"]) if isinstance(post["poll_options"], str) else post["poll_options"]
+        except (json.JSONDecodeError, TypeError):
+            poll_options = None
+
+    tweet_id = post_tweet(post["content"], media_ids=media_ids, poll_options=poll_options)
     return tweet_id, bool(media_ids)
+
+
+def publish_thread_posts(thread_posts):
+    """Publish a group of posts that form a thread. Returns (first_tweet_id, has_image).
+
+    Args:
+        thread_posts: List of post dicts sorted by thread_position.
+    """
+    tweets = [p["content"] if isinstance(p, dict) else dict(p)["content"] for p in thread_posts]
+
+    # Upload image for first tweet if available
+    media_ids_list = [None] * len(tweets)
+    first = thread_posts[0] if isinstance(thread_posts[0], dict) else dict(thread_posts[0])
+    if first.get("has_image") and first.get("image_path"):
+        try:
+            from images.uploader import upload_and_cleanup
+            media_ids_list[0] = upload_and_cleanup(first["image_path"])
+        except Exception:
+            pass
+
+    tweet_ids = publish_thread(tweets, media_ids_list=media_ids_list)
+    return tweet_ids[0] if tweet_ids else None, bool(media_ids_list[0])
 
 
 def run_post_next():

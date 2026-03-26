@@ -76,28 +76,27 @@ def rank_articles(articles_text, prefiltered_articles, count=10):
     return rankings
 
 
-def generate_posts(articles_text):
-    """Generate 7 X posts from article summaries using Groq (Llama 3.3)."""
+def generate_posts(articles_text, template_prompt=None, template_meta=None):
+    """Generate X posts from article summaries using Groq (Llama 3.3).
+
+    Args:
+        articles_text: Formatted article text for the prompt.
+        template_prompt: Optional specific template prompt (from GENERATION_TEMPLATES).
+        template_meta: Optional dict with template metadata (is_thread, is_poll, etc.)
+    """
     allowed, reason = usage_limiter.check_groq()
     if not allowed:
         raise UsageLimitReached(reason)
 
     client = _get_client()
 
-    # Inject emoji list from quality config
-    try:
-        from storage.database import get_quality_config
-        import json as _json
-        qconfig = get_quality_config()
-        emoji_raw = qconfig.get("emoji_preferred", "[]")
-        if isinstance(emoji_raw, str):
-            emoji_list = ", ".join(_json.loads(emoji_raw))
-        else:
-            emoji_list = ", ".join(emoji_raw)
-    except Exception:
-        emoji_list = "\U0001f6a8, \U0001f525, \u26a1, \U0001f4a1, \U0001f680, \U0001f9e0, \U0001f440, \U0001f4c8, \U0001f4a5, \u2728"
+    from generator.mistral_generator import _get_emoji_list
+    emoji_list = _get_emoji_list()
 
-    prompt = config.GENERATION_PROMPT.format(articles=articles_text, emoji_list=emoji_list)
+    if template_prompt:
+        prompt = template_prompt.format(articles=articles_text, emoji_list=emoji_list)
+    else:
+        prompt = config.GENERATION_PROMPT.format(articles=articles_text, emoji_list=emoji_list)
 
     response = client.chat.completions.create(
         model=MODEL,
@@ -108,7 +107,7 @@ def generate_posts(articles_text):
     raw_text = response.choices[0].message.content
     _log_usage("generate_posts", response.usage)
 
-    return parse_posts(raw_text)
+    return parse_posts(raw_text, template_meta=template_meta)
 
 
 def moderation_check(text):

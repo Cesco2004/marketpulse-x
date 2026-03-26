@@ -7,6 +7,8 @@ Decides which provider handles each task based on:
   4. Automatic fallback if the preferred provider is unavailable
 """
 
+import random
+
 import config
 from limiter.usage_limiter import usage_limiter
 
@@ -72,8 +74,81 @@ def rank_articles(articles_text, prefiltered_articles, count=10):
         return mistral_rank(articles_text, prefiltered_articles, count)
 
 
+def _select_templates(count=3):
+    """Select templates from the pool using weighted random selection.
+
+    Returns list of (template_name, template_config) tuples.
+    """
+    templates = config.GENERATION_TEMPLATES
+    if not templates:
+        return []
+
+    names = list(templates.keys())
+    weights = [templates[n].get("weight", 1.0) for n in names]
+
+    # Select without replacement (each template at most once per batch)
+    selected = []
+    available = list(zip(names, weights))
+    for _ in range(min(count, len(available))):
+        total = sum(w for _, w in available)
+        if total <= 0:
+            break
+        r = random.uniform(0, total)
+        cumulative = 0
+        for i, (name, w) in enumerate(available):
+            cumulative += w
+            if r <= cumulative:
+                selected.append((name, templates[name]))
+                available.pop(i)
+                break
+
+    return selected
+
+
 def generate_posts(articles_text):
-    """Route generate_posts to the appropriate provider."""
+    """Generate posts using template-based generation with automatic provider routing.
+
+    Selects 2-3 templates randomly, generates tweets for each, and combines results.
+    Falls back to legacy single-prompt generation if templates fail.
+    """
+    templates = _select_templates(count=3)
+
+    if not templates:
+        # Fallback to legacy single-prompt
+        return _generate_legacy(articles_text)
+
+    all_posts = []
+    for template_name, template_config in templates:
+        try:
+            prompt = template_config["prompt"]
+            meta = {
+                "is_thread": template_config.get("is_thread", False),
+                "is_poll": template_config.get("is_poll", False),
+                "template_name": template_name,
+            }
+
+            provider = get_provider("generate_posts")
+            if provider == "groq":
+                from generator.groq_generator import generate_posts as groq_gen
+                posts = groq_gen(articles_text, template_prompt=prompt, template_meta=meta)
+            else:
+                from generator.mistral_generator import generate_posts as mistral_gen
+                posts = mistral_gen(articles_text, template_prompt=prompt, template_meta=meta)
+
+            all_posts.extend(posts)
+        except Exception as e:
+            print(f"[Router] Template '{template_name}' failed: {e}")
+            continue
+
+    # If template generation produced nothing, fall back to legacy
+    if not all_posts:
+        return _generate_legacy(articles_text)
+
+    return all_posts
+
+
+def _generate_legacy(articles_text):
+    """Legacy single-prompt generation (fallback)."""
     provider = get_provider("generate_posts")
     if provider == "groq":
         from generator.groq_generator import generate_posts as groq_gen

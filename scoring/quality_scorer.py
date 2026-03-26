@@ -30,9 +30,11 @@ DEFAULT_CONFIG = {
         "\U0001f52c", "\U0001f310", "\U0001f4b0", "\U0001f916", "\U0001f512",
     ],
     "emoji_leading_bonus": 50,
-    "weight_ai": 0.35,
-    "weight_readability": 0.35,
-    "weight_emoji": 0.30,
+    "weight_substance": 0.30,
+    "weight_variety": 0.25,
+    "weight_ai": 0.20,
+    "weight_readability": 0.15,
+    "weight_emoji": 0.10,
     "min_quality_score": 50.0,
     "auto_reject_below": 30.0,
 }
@@ -305,6 +307,270 @@ def score_emoji_compliance(text, config=None):
     }
 
 
+# --- Generic closer patterns (AI-sounding kickers) ---
+GENERIC_CLOSERS = [
+    r"the .+ race is on",
+    r"will your .+ adapt",
+    r"the future (is|of) .+",
+    r"this changes everything",
+    r"are you ready\??",
+    r"let that sink in",
+    r"think about (that|it)",
+    r"and it'?s only the beginning",
+    r"buckle up",
+    r"the world (will never|is about to)",
+    r"game over",
+    r"welcome to the future",
+    r"the question is.{0,10}$",
+    r"that'?s (huge|massive|wild|insane)",
+    r"(you'?re|we'?re) not ready",
+    r"sleep on this",
+    r"mark my words",
+]
+
+# Cause-effect signal words
+CAUSE_EFFECT_WORDS = {
+    "because", "therefore", "means", "result", "consequence", "caused",
+    "leads to", "so that", "which means", "impact", "effect",
+}
+
+# Comparison signal words
+COMPARISON_WORDS = {
+    "more than", "less than", "compared to", "versus", "vs", "outpaces",
+    "doubles", "triples", "surpasses", "overtakes", "beats", "faster than",
+    "bigger than", "smaller than", "unlike",
+}
+
+
+def _extract_entities(text):
+    """Extract named entities and key identifiers for semantic dedup."""
+    entities = set()
+    clean = EMOJI_RE.sub("", text).strip()
+
+    # All-caps words (acronyms): IQM, TSMC, NASA, AI
+    for match in re.finditer(r"\b[A-Z]{2,}\b", clean):
+        entities.add(match.group().lower())
+
+    # Capitalized multi-word names: "Series B", "Quantum Brief"
+    for match in re.finditer(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", clean):
+        entities.add(match.group().lower())
+
+    # Single capitalized words not at sentence start (proper nouns)
+    for match in re.finditer(r"(?<=[.!?\n] |:\s)([A-Z][a-z]{2,})", clean):
+        entities.add(match.group().lower())
+    # Also words after line breaks
+    for line in clean.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        # Words that are capitalized mid-sentence
+        words = line.split()
+        for w in words[1:]:
+            if w and w[0].isupper() and w.isalpha() and len(w) >= 3:
+                entities.add(w.lower())
+
+    # Dollar amounts: $300M, $2.1B, $90M
+    for match in re.finditer(r"\$[\d,.]+[BMKbmk]?\b", text):
+        entities.add(match.group().lower())
+
+    # Percentages
+    for match in re.finditer(r"\d+%", text):
+        entities.add(match.group())
+
+    # Large numbers: 1,000, 42000, etc.
+    for match in re.finditer(r"\b\d{1,3}(?:,\d{3})+\b", text):
+        entities.add(match.group())
+
+    return entities
+
+
+def _classify_template(text):
+    """Classify tweet structure into a template type for variety scoring."""
+    text_lower = text.lower().strip()
+    clean = EMOJI_RE.sub("", text_lower).strip()
+
+    if "breaking" in clean[:30]:
+        return "breaking"
+    if re.search(r"^(most people|here'?s (why|the thing)|turns out|fun fact)", clean):
+        return "explainer"
+    if clean.rstrip().endswith("?"):
+        return "question"
+    if re.search(r"^\$?[\d,.]+[BMK%]?\b", clean):
+        return "data"
+    if re.search(r"(hot take|unpopular opinion|controversial|actually)", clean[:50]):
+        return "opinion"
+    # Default: standard news format (fact + consequence + kicker)
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if len(lines) >= 3:
+        return "3block"
+    return "short"
+
+
+def score_substance(text, config=None):
+    """Score tweet for substantive content quality. Returns dict with score, penalties, details.
+
+    Checks: specificity (proper nouns, numbers, entities), information density,
+    and penalizes generic AI-sounding closers.
+    """
+    score = 0
+    penalties = []
+    bonuses = []
+    text_lower = text.lower()
+    clean = EMOJI_RE.sub("", text).strip()
+
+    # --- Specificity (0-40 points) ---
+
+    # Proper nouns / named entities
+    entities = _extract_entities(text)
+    proper_nouns = [e for e in entities if e.isalpha() and len(e) >= 3]
+    if proper_nouns:
+        score += 10
+        bonuses.append(f"Named entity: {proper_nouns[0]} (+10)")
+
+    # Specific number or dollar amount
+    has_dollar = bool(re.search(r"\$[\d,.]+[BMKbmk]?", text))
+    has_specific_number = bool(re.search(r"\b\d{2,}\b", clean))
+    has_percentage = bool(re.search(r"\d+%", text))
+    if has_dollar:
+        score += 15
+        bonuses.append("Dollar amount (+15)")
+    elif has_percentage:
+        score += 12
+        bonuses.append("Percentage (+12)")
+    elif has_specific_number:
+        score += 8
+        bonuses.append("Specific number (+8)")
+
+    # Acronyms (company/org references)
+    acronyms = [e for e in entities if e.isupper() and len(e) >= 2]
+    if acronyms:
+        score += 10
+        bonuses.append(f"Entity reference: {acronyms[0] if acronyms else ''} (+10)")
+
+    # Time reference (recency signal)
+    time_words = ["just", "today", "this week", "yesterday", "announced", "launches", "launched"]
+    if any(w in text_lower for w in time_words):
+        score += 5
+        bonuses.append("Time reference (+5)")
+
+    # --- Information density (0-30 points) ---
+
+    # Cause-effect relationship
+    if any(w in text_lower for w in CAUSE_EFFECT_WORDS):
+        score += 10
+        bonuses.append("Cause-effect (+10)")
+
+    # Comparison
+    if any(w in text_lower for w in COMPARISON_WORDS):
+        score += 5
+        bonuses.append("Comparison (+5)")
+
+    # Content word ratio (nouns/verbs vs filler)
+    words = re.findall(r"[a-zA-Z]+", clean)
+    filler = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+              "have", "has", "had", "do", "does", "did", "will", "would", "could",
+              "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+              "on", "with", "at", "by", "from", "as", "into", "about", "it", "its"}
+    if words:
+        content_ratio = len([w for w in words if w.lower() not in filler]) / len(words)
+        if content_ratio >= 0.55:
+            score += 15
+            bonuses.append(f"High content density ({content_ratio:.0%}, +15)")
+
+    # --- Generic closer penalty (-15 each) ---
+    # Look at last 3 non-empty lines (closers are often before a hashtag or trailing blank)
+    non_empty_lines = [l.strip() for l in text.split("\n") if l.strip() and not l.strip().startswith("#")]
+    last_lines = " ".join(non_empty_lines[-3:]).lower() if non_empty_lines else text_lower
+    for pattern in GENERIC_CLOSERS:
+        if re.search(pattern, last_lines):
+            score -= 15
+            penalties.append(f'Generic closer: "{pattern}" (-15)')
+
+    score = max(min(score, 100), 0)
+    return {
+        "score": score,
+        "penalties": penalties,
+        "bonuses": bonuses,
+        "details": f"{len(bonuses)} substance signals, {len(penalties)} generic patterns",
+    }
+
+
+def score_variety(text, existing_posts=None, config=None):
+    """Score tweet for variety vs recent history. Returns dict with score, penalties, details.
+
+    Two dimensions:
+    1. Entity-based semantic dedup (catches IQM $300M posted 3x with different wording)
+    2. Structural variety (penalizes same template used repeatedly)
+    """
+    score = 100
+    penalties = []
+    existing = existing_posts or []
+
+    # --- Entity-based semantic dedup (0-50 of the 100 points) ---
+    new_entities = _extract_entities(text)
+
+    if new_entities and existing:
+        worst_entity_overlap = 0.0
+        most_similar = None
+
+        for post in existing:
+            content = post["content"] if isinstance(post, dict) else post[1]
+            old_entities = _extract_entities(content)
+            if not old_entities:
+                continue
+
+            intersection = new_entities & old_entities
+            # Use overlap coefficient (intersection / min) instead of Jaccard
+            # This catches cases where a short tweet reuses entities from a longer one
+            min_size = min(len(new_entities), len(old_entities))
+            overlap = len(intersection) / min_size if min_size else 0
+
+            if overlap > worst_entity_overlap:
+                worst_entity_overlap = overlap
+                most_similar = content
+
+        if worst_entity_overlap >= 0.7:
+            score -= 50
+            penalties.append(f"Entity duplicate ({worst_entity_overlap:.0%} overlap, -50)")
+        elif worst_entity_overlap >= 0.5:
+            penalty = int(worst_entity_overlap * 50)
+            score -= penalty
+            penalties.append(f"Similar entities ({worst_entity_overlap:.0%} overlap, -{penalty})")
+        elif worst_entity_overlap >= 0.35:
+            penalty = int(worst_entity_overlap * 30)
+            score -= penalty
+            penalties.append(f"Some entity overlap ({worst_entity_overlap:.0%}, -{penalty})")
+
+    # --- Structural variety (0-50 of the 100 points) ---
+    my_template = _classify_template(text)
+
+    if existing:
+        recent = existing[:10]  # Last 10 posts
+        recent_templates = [_classify_template(
+            p["content"] if isinstance(p, dict) else p[1]
+        ) for p in recent]
+
+        same_count = sum(1 for t in recent_templates if t == my_template)
+
+        if same_count >= 4:
+            score -= 40
+            penalties.append(f'Template "{my_template}" used {same_count}/10 recent tweets (-40)')
+        elif same_count >= 3:
+            score -= 30
+            penalties.append(f'Template "{my_template}" used {same_count}/10 recent tweets (-30)')
+        elif same_count >= 2:
+            score -= 15
+            penalties.append(f'Template "{my_template}" used {same_count}/10 recent tweets (-15)')
+
+    score = max(score, 0)
+    return {
+        "score": score,
+        "penalties": penalties,
+        "template": my_template,
+        "details": f"Template: {my_template}, {len(penalties)} variety issues",
+    }
+
+
 def _extract_significant_words(text):
     """Extract significant words from text for similarity comparison."""
     clean = EMOJI_RE.sub("", text).lower()
@@ -377,31 +643,58 @@ def score_duplicate(text, existing_posts):
 
 
 def score_post(text, config=None, existing_posts=None):
-    """Compute composite quality score for a tweet. Returns full breakdown."""
+    """Compute composite quality score for a tweet. Returns full breakdown.
+
+    5-component system:
+    - Substance (30%): Is the content specific and informative?
+    - Variety (25%): Different from recent tweets in structure and topic?
+    - Anti-AI (20%): Avoids AI-tell patterns
+    - Readability (15%): Accessible language
+    - Emoji/Format (10%): Correct formatting
+    """
     cfg = _load_config(config)
 
     ai = score_ai_detection(text, cfg)
     readability = score_readability(text, cfg)
     emoji = score_emoji_compliance(text, cfg)
+    substance = score_substance(text, cfg)
+    variety = score_variety(text, existing_posts or [], cfg)
+
+    # Legacy duplicate check (kept as hard blocker for near-duplicates)
     duplicate = score_duplicate(text, existing_posts or [])
 
+    # New 5-component weighting
+    w_substance = cfg.get("weight_substance", 0.30)
+    w_variety = cfg.get("weight_variety", 0.25)
+    w_ai = cfg.get("weight_ai", 0.20)
+    w_read = cfg.get("weight_readability", 0.15)
+    w_emoji = cfg.get("weight_emoji", 0.10)
+
     overall = (
-        ai["score"] * cfg["weight_ai"]
-        + readability["score"] * cfg["weight_readability"]
-        + emoji["score"] * cfg["weight_emoji"]
+        substance["score"] * w_substance
+        + variety["score"] * w_variety
+        + ai["score"] * w_ai
+        + readability["score"] * w_read
+        + emoji["score"] * w_emoji
     )
 
-    # Apply duplicate penalty as a multiplier (a duplicate tanks the whole score)
+    # Legacy duplicate as hard blocker (entity dedup in variety handles soft cases)
     if duplicate["score"] < 100:
         dup_factor = duplicate["score"] / 100.0
         overall = overall * dup_factor
 
     overall = round(overall, 1)
 
-    all_penalties = ai["penalties"] + readability["penalties"] + emoji["penalties"] + duplicate["penalties"]
+    all_penalties = (
+        substance["penalties"] + variety["penalties"]
+        + ai["penalties"] + readability["penalties"]
+        + emoji["penalties"] + duplicate["penalties"]
+    )
 
     return {
         "overall": overall,
+        "substance": substance,
+        "variety": variety,
         "ai": ai,
         "readability": readability,
         "emoji": emoji,

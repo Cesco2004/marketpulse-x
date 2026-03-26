@@ -34,80 +34,57 @@ from storage.database import (
     mark_as_posted,
     get_stats,
 )
-from sources.rss_fetcher import fetch_all_feeds, keyword_prefilter, format_articles_for_prompt
-from generator.mistral_generator import rank_articles, generate_posts, get_batch_id
 from publisher.x_publisher import post_tweet, verify_credentials
 from scheduler.scheduler import scheduler as bot_scheduler
+from pipeline import run_fetch_pipeline
 
 
 def cmd_fetch():
-    """Fetch RSS feeds, score + rank articles, generate posts with Mistral."""
+    """Fetch all sources (RSS + HN + Reddit), score + rank articles, generate posts."""
     print("\n=== FETCH & GENERATE ===\n")
 
-    # Step 1: Fetch RSS
-    print("[1/4] Fetching RSS feeds...")
-    articles = fetch_all_feeds()
-    print(f"  Found {len(articles)} articles total.\n")
+    print("[*] Running full pipeline (RSS + HackerNews + Reddit → rank → generate)...")
+    result = run_fetch_pipeline()
 
-    if not articles:
-        print("No articles found. Check your RSS feeds in config.py.")
+    print(f"\n  Articles fetched: {result['articles_fetched']}")
+    print(f"  New articles saved: {result['articles_saved']}")
+
+    if result.get("skipped_reason"):
+        print(f"  Skipped: {result['skipped_reason']}")
         return
 
-    # Save articles to DB
-    saved, new_urls = save_articles(articles)
-    print(f"  {saved} new articles saved to database.\n")
+    if result.get("errors"):
+        for err in result["errors"]:
+            print(f"  Error: {err}")
 
-    if saved == 0:
-        print("  All articles already in database. No tokens spent.\n")
-        return
+    if result.get("prefiltered"):
+        print(f"\n  Pre-filtered (top {len(result['prefiltered'])}):")
+        for i, a in enumerate(result["prefiltered"][:10], 1):
+            kw = ", ".join(a["keywords"][:3]) if a.get("keywords") else ""
+            print(f"    {i}. [score={a['score']}] [{a['source']}] {a['title'][:60]}  ({kw})")
 
-    # Step 2: Keyword pre-filter (30 -> 10)
-    print("[2/4] Keyword scoring (pre-filter to top 10)...")
-    new_url_set = set(new_urls)
-    articles = [a for a in articles if a.get("url") in new_url_set]
-    prefiltered = keyword_prefilter(articles, count=10)
-    for i, a in enumerate(prefiltered, 1):
-        print(f"  {i}. [score={a['keyword_score']}] [{a['source']}] {a['title'][:70]}")
-    print()
+    if result.get("selected"):
+        print(f"\n  Selected for generation ({len(result['selected'])}):")
+        for i, a in enumerate(result["selected"], 1):
+            print(f"    {i}. [{a['source']}] {a['title'][:70]}")
 
-    # Step 3: Mistral ranks top 5 from the 10
-    print("[3/4] Mistral ranking (selecting top 5)...")
-    articles_text = format_articles_for_prompt(prefiltered)
-    rankings = rank_articles(articles_text, count=len(prefiltered))
-    print(f"  Mistral ranking: {rankings}")
+    if result.get("posts"):
+        print(f"\n  Generated {len(result['posts'])} posts (batch: {result.get('batch_id', '?')})")
+        print(f"    Auto-approved: {result.get('auto_approved', 0)}")
+        print(f"    Auto-rejected: {result.get('auto_rejected', 0)}")
+        print(f"    Needs review: {result.get('needs_review', 0)}")
 
-    # Reorder articles based on Mistral's ranking
-    top_articles = []
-    for rank in rankings[:5]:
-        idx = rank - 1
-        if 0 <= idx < len(prefiltered):
-            top_articles.append(prefiltered[idx])
+        for i, p in enumerate(result["posts"], 1):
+            score = p.get("quality_score", "?")
+            ptype = p.get("type", "?")
+            hint = f" [img: {p['image_hint']}]" if p.get("image_hint") else ""
+            print(f"\n  --- Post {i} ({ptype}, score={score}){hint} ---")
+            print(f"  {p['content'][:200]}")
 
-    # Fallback if ranking failed
-    if len(top_articles) < 3:
-        top_articles = prefiltered[:5]
-
-    print("  Selected articles:")
-    for i, a in enumerate(top_articles, 1):
-        print(f"    {i}. [{a['source']}] {a['title'][:70]}")
-    print()
-
-    # Step 4: Generate posts with Mistral
-    print("[4/4] Generating posts with Mistral...")
-    final_text = format_articles_for_prompt(top_articles)
-    posts = generate_posts(final_text)
-
-    if not posts:
-        print("  Error: Mistral returned no posts. Check the API key and prompt.")
-        return
-
-    # Save posts to DB
-    batch_id = get_batch_id()
-    save_posts(posts, batch_id)
-
-    print(f"\n  Generated {len(posts)} posts (batch: {batch_id})")
-    print("  Status: pending_review")
-    print("  Run 'python main.py review' to approve them.\n")
+    if result["success"]:
+        print("\n  Done. Run 'python main.py review' to approve pending posts.\n")
+    else:
+        print("\n  Pipeline finished with errors.\n")
 
 
 def cmd_review():

@@ -61,28 +61,40 @@ def rank_articles(articles_text, prefiltered_articles, count=10):
     return rankings
 
 
-def generate_posts(articles_text):
-    """Generate 7 X posts from article summaries using Mistral."""
-    allowed, reason = usage_limiter.check_mistral()
-    if not allowed:
-        raise UsageLimitReached(reason)
-
-    client = get_client()
-
-    # Inject emoji list from quality config
+def _get_emoji_list():
+    """Get emoji list from quality config or use defaults."""
     try:
         from storage.database import get_quality_config
         import json as _json
         qconfig = get_quality_config()
         emoji_raw = qconfig.get("emoji_preferred", "[]")
         if isinstance(emoji_raw, str):
-            emoji_list = ", ".join(_json.loads(emoji_raw))
-        else:
-            emoji_list = ", ".join(emoji_raw)
+            return ", ".join(_json.loads(emoji_raw))
+        return ", ".join(emoji_raw)
     except Exception:
-        emoji_list = "\U0001f6a8, \U0001f525, \u26a1, \U0001f4a1, \U0001f680, \U0001f9e0, \U0001f440, \U0001f4c8, \U0001f4a5, \u2728"
+        return "\U0001f6a8, \U0001f525, \u26a1, \U0001f4a1, \U0001f680, \U0001f9e0, \U0001f440, \U0001f4c8, \U0001f4a5, \u2728"
 
-    prompt = config.GENERATION_PROMPT.format(articles=articles_text, emoji_list=emoji_list)
+
+def generate_posts(articles_text, template_prompt=None, template_meta=None):
+    """Generate X posts from article summaries using Mistral.
+
+    Args:
+        articles_text: Formatted article text for the prompt.
+        template_prompt: Optional specific template prompt (from GENERATION_TEMPLATES).
+                         Falls back to config.GENERATION_PROMPT if None.
+        template_meta: Optional dict with template metadata (is_thread, is_poll, etc.)
+    """
+    allowed, reason = usage_limiter.check_mistral()
+    if not allowed:
+        raise UsageLimitReached(reason)
+
+    client = get_client()
+    emoji_list = _get_emoji_list()
+
+    if template_prompt:
+        prompt = template_prompt.format(articles=articles_text, emoji_list=emoji_list)
+    else:
+        prompt = config.GENERATION_PROMPT.format(articles=articles_text, emoji_list=emoji_list)
 
     response = client.chat.complete(
         model=MODEL,
@@ -98,33 +110,85 @@ def generate_posts(articles_text):
         cost = (usage.prompt_tokens * 0.000001) + (usage.completion_tokens * 0.000003)
         log_api_usage("mistral", "generate_posts", usage.prompt_tokens, usage.completion_tokens, cost)
 
-    return parse_posts(raw_text)
+    return parse_posts(raw_text, template_meta=template_meta)
 
 
-def parse_posts(raw_text):
+def _extract_image_hint(text):
+    """Extract IMAGE_HINT from text and return (cleaned_text, hint)."""
+    match = re.search(r"\n?IMAGE_HINT:\s*(.+?)(?:\n|$)", text, re.IGNORECASE)
+    if match:
+        hint = match.group(1).strip().strip("[]")
+        cleaned = text[:match.start()] + text[match.end():]
+        return cleaned.strip(), hint
+    return text.strip(), None
+
+
+def _clean_post_content(content):
+    """Clean raw LLM output into tweet content."""
+    content = content.strip().strip('"').strip("*").strip()
+    content = re.sub(r"\s*[\(\[]\d+\s*char(?:acter)?s?[\)\]]\s*$", "", content).strip()
+    content = re.sub(r"\n?-{2,}\s*$", "", content).strip()
+    return content
+
+
+def parse_posts(raw_text, template_meta=None):
     """Parse LLM output into structured posts.
 
-    Handles all Mistral output variations:
-      TWEET 1 (Breaking): ...
-      **TWEET 2**\n...
-      🚀 TWEET 3: ...
-      *TWEET 4 (Stat bomb):* ...
-      1. ...
+    Handles multiple output formats:
+      - TWEET 1 / POST 1 labels (multiline and inline)
+      - THREAD_TWEET 1/2/3 labels (for threads)
+      - POLL: + OPTION_A/B/C/D labels (for polls)
+      - IMAGE_HINT: lines (extracted and stored separately)
+      - Numbered lists as fallback
     """
+    template_meta = template_meta or {}
     posts = []
+
+    # --- POLL format ---
+    if template_meta.get("is_poll"):
+        poll_match = re.search(r"POLL:\s*(.+?)(?:\n|$)", raw_text, re.IGNORECASE)
+        if poll_match:
+            question = poll_match.group(1).strip()
+            options = re.findall(r"OPTION_[A-D]:\s*(.+?)(?:\n|$)", raw_text, re.IGNORECASE)
+            if options and len(options) >= 2:
+                _, hint = _extract_image_hint(raw_text)
+                posts.append({
+                    "content": question,
+                    "type": "poll",
+                    "poll_options": json.dumps(options[:4]),
+                    "image_hint": hint,
+                })
+                return posts
+
+    # --- THREAD format ---
+    if template_meta.get("is_thread"):
+        thread_re = re.compile(
+            r"THREAD_TWEET\s+(\d+)\s*:?\s*(.+?)(?=THREAD_TWEET\s+\d+|IMAGE_HINT|$)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        thread_matches = thread_re.findall(raw_text)
+        if thread_matches:
+            _, hint = _extract_image_hint(raw_text)
+            thread_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S_thread")
+            for num_str, content in thread_matches:
+                cleaned = _clean_post_content(content)
+                if cleaned and len(cleaned) > 10:
+                    posts.append({
+                        "content": cleaned,
+                        "type": "thread",
+                        "thread_id": thread_id,
+                        "thread_position": int(num_str),
+                        "image_hint": hint if int(num_str) == 1 else None,
+                    })
+            if posts:
+                return posts
+
+    # --- Standard TWEET/POST format ---
     post_types = [
-        "news",
-        "news",
-        "educational",
-        "data",
-        "opinion",
-        "educational",
-        "question",
+        "news", "news", "educational", "data", "opinion", "educational", "question",
     ]
 
     # Step 1: Normalize — strip markdown bold/italic around TWEET/POST labels
-    # "**TWEET 5**"  → "TWEET 5"
-    # "*TWEET 5*"    → "TWEET 5"
     normalized = re.sub(
         r"\*{1,2}((?:TWEET|POST)\s+\d+[^*]*?)\*{1,2}",
         r"\1",
@@ -133,7 +197,6 @@ def parse_posts(raw_text):
     )
 
     # Step 2: Find all TWEET/POST label positions
-    # Allows: emoji before, optional (Type) after, optional colon, ends at newline or colon+space
     label_re = re.compile(
         r"(?:^|\n)[^\n]*?(?:TWEET|POST)\s+(\d+)\s*(?:\([^)]*\))?\s*:?\s*(?:\n|$)",
         re.IGNORECASE | re.MULTILINE,
@@ -144,31 +207,29 @@ def parse_posts(raw_text):
         for i, match in enumerate(labels):
             start = match.end()
             end = labels[i + 1].start() if i + 1 < len(labels) else len(normalized)
-            content = normalized[start:end].strip().strip('"').strip("*").strip()
-            content = re.sub(r"\s*[\(\[]\d+\s*char(?:acter)?s?[\)\]]\s*$", "", content).strip()
-            content = re.sub(r"\n?-{2,}\s*$", "", content).strip()  # Remove trailing --- separators
+            raw_content = normalized[start:end]
+            content, hint = _extract_image_hint(raw_content)
+            content = _clean_post_content(content)
             if content and len(content) > 10:
                 idx = i
                 post_type = post_types[idx] if idx < len(post_types) else "other"
-                posts.append({"content": content, "type": post_type})
+                posts.append({"content": content, "type": post_type, "image_hint": hint})
         if posts:
             return posts
 
-    # Step 3: Try inline label format (label and content on same line)
-    # "TWEET 1 (Breaking): 🚨 BREAKING: Google just..."
+    # Step 3: Try inline label format
     inline_re = re.compile(
         r"(?:^|\n)[^\n]*?(?:TWEET|POST)\s+(\d+)\s*(?:\([^)]*\))?\s*[:\-]\s*(.+?)(?=\n[^\n]*?(?:TWEET|POST)\s+\d+|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
     matches = inline_re.findall(normalized)
     if matches:
-        for i, (num, content) in enumerate(matches[:7]):
-            cleaned = content.strip().strip('"').strip("*").strip()
-            cleaned = re.sub(r"\s*[\(\[]\d+\s*char(?:acter)?s?[\)\]]\s*$", "", cleaned).strip()
-            cleaned = re.sub(r"\n?-{2,}\s*$", "", cleaned).strip()
-            if cleaned and len(cleaned) > 10:
+        for i, (num, raw_content) in enumerate(matches[:7]):
+            content, hint = _extract_image_hint(raw_content)
+            content = _clean_post_content(content)
+            if content and len(content) > 10:
                 post_type = post_types[i] if i < len(post_types) else "other"
-                posts.append({"content": cleaned, "type": post_type})
+                posts.append({"content": content, "type": post_type, "image_hint": hint})
         if posts:
             return posts
 
@@ -176,12 +237,12 @@ def parse_posts(raw_text):
     pattern3 = r"(\d+)[.\)]\s+(.+?)(?=\n\d+[.\)]|\Z)"
     matches = re.findall(pattern3, raw_text, re.DOTALL)
 
-    for i, (num, content) in enumerate(matches[:7]):
-        cleaned = content.strip().strip('"').strip("*").strip()
-        cleaned = re.sub(r"\s*[\(\[]\d+\s*char(?:acter)?s?[\)\]]\s*$", "", cleaned).strip()
-        if cleaned and len(cleaned) > 10:
+    for i, (num, raw_content) in enumerate(matches[:7]):
+        content, hint = _extract_image_hint(raw_content)
+        content = _clean_post_content(content)
+        if content and len(content) > 10:
             post_type = post_types[i] if i < len(post_types) else "other"
-            posts.append({"content": cleaned, "type": post_type})
+            posts.append({"content": content, "type": post_type, "image_hint": hint})
 
     return posts
 

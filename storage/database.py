@@ -301,6 +301,20 @@ def init_db():
         )
     """)
 
+    # --- Content sources (non-RSS: HN, Reddit, YouTube, etc.) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS content_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            config_value TEXT NOT NULL,
+            is_enabled INTEGER DEFAULT 1,
+            priority INTEGER DEFAULT 2,
+            topic_weight REAL DEFAULT 1.0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # --- Monthly budget (singleton) ---
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS monthly_budget (
@@ -382,6 +396,21 @@ def init_db():
             (name, url, priority, category, description, website, enabled, weight),
         )
 
+    # Seed default content sources (Reddit subreddits, HN config)
+    default_content_sources = [
+        ("reddit", "r/technology", "technology"),
+        ("reddit", "r/artificial", "artificial"),
+        ("reddit", "r/Futurology", "Futurology"),
+        ("reddit", "r/singularity", "singularity"),
+        ("reddit", "r/startups", "startups"),
+        ("hackernews", "HackerNews Top Stories", "top"),
+    ]
+    for source_type, name, config_value in default_content_sources:
+        cursor.execute(
+            "INSERT OR IGNORE INTO content_sources (source_type, name, config_value) VALUES (?, ?, ?)",
+            (source_type, name, config_value),
+        )
+
     # Migrate existing tables if needed
     migrations = [
         ("articles", "keyword_score", "INTEGER DEFAULT 0"),
@@ -404,6 +433,14 @@ def init_db():
         ("quality_config", "auto_approve_above", "REAL DEFAULT 70.0"),
         ("engagement_replies", "reject_reason", "TEXT"),
         ("engagement_config", "auto_approve_above", "REAL DEFAULT 60.0"),
+        # New: thread/poll support
+        ("posts", "thread_id", "TEXT"),
+        ("posts", "thread_position", "INTEGER"),
+        ("posts", "poll_options", "TEXT"),
+        ("posts", "image_hint", "TEXT"),
+        # New: expanded scoring weights
+        ("quality_config", "weight_substance", "REAL DEFAULT 0.30"),
+        ("quality_config", "weight_variety", "REAL DEFAULT 0.25"),
     ]
     for table, column, col_type in migrations:
         if not _column_exists(cursor, table, column):
@@ -893,8 +930,9 @@ def save_posts(posts, batch_id, source_article_ids=None):
         cursor.execute(
             """INSERT INTO posts (content, post_type, status, batch_id, source_article_ids,
                quality_score, ai_score, readability_score, emoji_score, score_details,
-               image_url, image_path, image_source, image_score, has_image)
-               VALUES (?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               image_url, image_path, image_source, image_score, has_image,
+               thread_id, thread_position, poll_options, image_hint)
+               VALUES (?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 post["content"], post["type"], batch_id, ids_json,
                 post.get("quality_score"),
@@ -907,6 +945,10 @@ def save_posts(posts, batch_id, source_article_ids=None):
                 post.get("image_source"),
                 post.get("image_score"),
                 post.get("has_image", 0),
+                post.get("thread_id"),
+                post.get("thread_position"),
+                post.get("poll_options"),
+                post.get("image_hint"),
             ),
         )
     conn.commit()
@@ -1857,3 +1899,56 @@ def get_analytics_summary():
 
     conn.close()
     return summary
+
+
+# --- Content sources (non-RSS) ---
+
+def get_content_sources(source_type=None, enabled_only=True):
+    """Get content sources, optionally filtered by type (reddit, hackernews, youtube)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if source_type:
+        if enabled_only:
+            cursor.execute("SELECT * FROM content_sources WHERE source_type = ? AND is_enabled = 1 ORDER BY priority", (source_type,))
+        else:
+            cursor.execute("SELECT * FROM content_sources WHERE source_type = ? ORDER BY priority", (source_type,))
+    else:
+        if enabled_only:
+            cursor.execute("SELECT * FROM content_sources WHERE is_enabled = 1 ORDER BY source_type, priority")
+        else:
+            cursor.execute("SELECT * FROM content_sources ORDER BY source_type, priority")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_content_source(source_type, name, config_value, priority=2, topic_weight=1.0):
+    """Add a new content source."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO content_sources (source_type, name, config_value, priority, topic_weight) VALUES (?, ?, ?, ?, ?)",
+        (source_type, name, config_value, priority, topic_weight),
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    conn.close()
+    return new_id
+
+
+def toggle_content_source(source_id):
+    """Toggle a content source on/off."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE content_sources SET is_enabled = CASE WHEN is_enabled = 1 THEN 0 ELSE 1 END WHERE id = ?", (source_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_content_source(source_id):
+    """Delete a content source."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM content_sources WHERE id = ?", (source_id,))
+    conn.commit()
+    conn.close()

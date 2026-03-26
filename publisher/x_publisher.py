@@ -28,8 +28,15 @@ def get_v1_api():
     return tweepy.API(auth)
 
 
-def post_tweet(content, media_ids=None):
-    """Post a tweet with optional media and return the tweet ID."""
+def post_tweet(content, media_ids=None, poll_options=None, poll_duration=1440):
+    """Post a tweet with optional media/poll and return the tweet ID.
+
+    Args:
+        content: Tweet text.
+        media_ids: Optional list of media IDs for image attachment.
+        poll_options: Optional list of poll option strings (2-4 options).
+        poll_duration: Poll duration in minutes (default: 24 hours).
+    """
     allowed, reason = usage_limiter.check_twitter_post()
     if not allowed:
         raise UsageLimitReached(reason)
@@ -38,6 +45,9 @@ def post_tweet(content, media_ids=None):
     kwargs = {"text": content}
     if media_ids:
         kwargs["media_ids"] = media_ids
+    if poll_options and len(poll_options) >= 2:
+        kwargs["poll_options"] = poll_options[:4]
+        kwargs["poll_duration_minutes"] = poll_duration
     response = client.create_tweet(**kwargs)
     tweet_id = response.data["id"]
     log_api_usage("x", "create_tweet", cost_estimate=0.01)
@@ -55,6 +65,27 @@ def reply_to_tweet(tweet_id, reply_text):
     reply_id = response.data["id"]
     log_api_usage("x", "create_reply", cost_estimate=0.01)
     return reply_id
+
+
+def publish_thread(tweets, media_ids_list=None):
+    """Post a series of tweets as a thread. Returns list of tweet IDs.
+
+    Args:
+        tweets: List of tweet text strings (first is the head tweet).
+        media_ids_list: Optional list of media_ids (one per tweet, None for no media).
+    """
+    ids = []
+    for i, text in enumerate(tweets):
+        media = None
+        if media_ids_list and i < len(media_ids_list):
+            media = media_ids_list[i]
+
+        if i == 0:
+            tweet_id = post_tweet(text, media_ids=media)
+        else:
+            tweet_id = reply_to_tweet(ids[-1], text)
+        ids.append(tweet_id)
+    return ids
 
 
 def verify_credentials():
