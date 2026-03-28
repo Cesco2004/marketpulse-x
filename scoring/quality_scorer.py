@@ -619,6 +619,31 @@ def score_substance(text, config=None):
         score += 5
         bonuses.append("Comparison (+5)")
 
+    # Cross-source synthesis bonus: reward tweets that reference multiple data sources
+    source_markers = {
+        "polymarket": ["polymarket", "prediction market", "odds"],
+        "crypto": ["coingecko", "$btc", "$eth", "bitcoin", "ethereum", "crypto"],
+        "macro": ["s&p", "nasdaq", "vix", "treasury", "yahoo finance", "dow", "yield", "dxy", "gold", "oil"],
+        "sentiment": ["fear", "greed", "sentiment"],
+    }
+    sources_referenced = sum(
+        1 for markers in source_markers.values()
+        if any(m in text_lower for m in markers)
+    )
+    if sources_referenced >= 3:
+        score += 20
+        bonuses.append(f"Cross-source synthesis ({sources_referenced} sources, +20)")
+    elif sources_referenced >= 2:
+        score += 12
+        bonuses.append(f"Multi-source tweet ({sources_referenced} sources, +12)")
+
+    # Connection language bonus
+    connection_words = ["meanwhile", "while", "despite", "even as", "at the same time",
+                        "across markets", "divergence", "convergence", "decoupling"]
+    if any(w in text_lower for w in connection_words):
+        score += 8
+        bonuses.append("Cross-market connection language (+8)")
+
     # Content word ratio (nouns/verbs vs filler)
     words = re.findall(r"[a-zA-Z]+", clean)
     filler = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",

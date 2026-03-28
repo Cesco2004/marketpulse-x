@@ -69,6 +69,8 @@ def generate_chart(chart_type, data, title, output_path, chart_config=None):
             _draw_pie_chart(ax, fig, data)
         elif chart_type == "comparison":
             _draw_comparison_chart(ax, data)
+        elif chart_type == "dual_overlay":
+            _draw_dual_overlay(ax, data)
         else:
             _draw_line_chart(ax, data)
 
@@ -316,5 +318,74 @@ def _draw_comparison_chart(ax, data):
     ax.legend(fontsize=9, framealpha=0.5, facecolor=COLORS["card"],
               edgecolor=COLORS["border"])
     ax.grid(True, axis="y")
+    ax.grid(False, axis="x")
+    ax.tick_params(axis="both", length=0)
+
+
+def _draw_dual_overlay(ax, data):
+    """Dual-axis overlay chart for cross-market correlation/divergence.
+
+    Shows two assets on the same time axis with independent Y scales.
+    Left Y-axis: Asset A (e.g., BTC price). Right Y-axis: Asset B (e.g., S&P 500).
+    """
+    values_a = data.get("values_a", [])
+    values_b = data.get("values_b", [])
+    label_a = data.get("label_a", "Asset A")
+    label_b = data.get("label_b", "Asset B")
+    labels = data.get("labels", [])
+
+    if not values_a or not values_b:
+        return
+
+    # Use the shorter length
+    length = min(len(values_a), len(values_b))
+    values_a = values_a[:length]
+    values_b = values_b[:length]
+    x = range(length)
+
+    # Asset A on left Y-axis
+    color_a = COLORS["blue"]
+    ax.plot(x, values_a, color=color_a, linewidth=2.5, label=label_a, zorder=5)
+    ax.fill_between(x, values_a, min(values_a), alpha=0.05, color=color_a)
+    ax.set_ylabel(label_a, color=color_a, fontsize=9, labelpad=10)
+    ax.tick_params(axis="y", labelcolor=color_a)
+
+    # Zoom left Y-axis
+    range_a = max(values_a) - min(values_a) if max(values_a) != min(values_a) else abs(values_a[0]) * 0.02
+    ax.set_ylim(min(values_a) - range_a * 0.2, max(values_a) + range_a * 0.2)
+
+    # Asset B on right Y-axis
+    color_b = COLORS["yellow"]
+    ax2 = ax.twinx()
+    ax2.plot(x, values_b, color=color_b, linewidth=2, label=label_b,
+             linestyle="--", alpha=0.85, zorder=4)
+    ax2.set_ylabel(label_b, color=color_b, fontsize=9, labelpad=10)
+    ax2.tick_params(axis="y", labelcolor=color_b)
+    ax2.spines["right"].set_color(color_b)
+    ax2.spines["right"].set_linewidth(0.5)
+    ax2.spines["top"].set_visible(False)
+
+    # Zoom right Y-axis
+    range_b = max(values_b) - min(values_b) if max(values_b) != min(values_b) else abs(values_b[0]) * 0.02
+    ax2.set_ylim(min(values_b) - range_b * 0.2, max(values_b) + range_b * 0.2)
+
+    # X labels
+    if labels:
+        step = max(1, len(labels) // 5)
+        ticks = list(range(0, min(len(labels), length), step))
+        ax.set_xticks(ticks)
+        ax.set_xticklabels([labels[i][-5:] if len(labels[i]) > 5 else labels[i] for i in ticks],
+                           fontsize=8)
+    else:
+        ax.set_xticks([])
+
+    # Combined legend
+    lines_a, labels_a = ax.get_legend_handles_labels()
+    lines_b, labels_b = ax2.get_legend_handles_labels()
+    ax.legend(lines_a + lines_b, labels_a + labels_b,
+              loc="upper left", fontsize=9, framealpha=0.5,
+              facecolor=COLORS["card"], edgecolor=COLORS["border"])
+
+    ax.grid(True, axis="y", alpha=0.3)
     ax.grid(False, axis="x")
     ax.tick_params(axis="both", length=0)

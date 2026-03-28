@@ -31,6 +31,7 @@ SOURCE_CATEGORIES = {
     "crypto": {"label": "Crypto Markets", "icon": "₿", "color": "#f7931a"},
     "sp500": {"label": "S&P 500 / Indices", "icon": "📈", "color": "#00C853"},
     "macro": {"label": "Macro / Fed / Bonds", "icon": "🏛️", "color": "#60a5fa"},
+    "sentiment": {"label": "Fear & Greed", "icon": "🌡️", "color": "#f97316"},
     "cross_market": {"label": "Cross-Market", "icon": "⚡", "color": "#fbbf24"},
 }
 
@@ -64,14 +65,17 @@ HIGH_IMPACT_KEYWORDS = [
 DISCLAIMER = "\n\nNot financial advice."
 
 # Prompt: rank market data
-RANKING_PROMPT = """You are a financial data editor for a market data Twitter bot.
+RANKING_PROMPT = """You are a financial data editor for a market data Twitter bot that connects dots across markets.
 
-Here are {count} data points from Polymarket, crypto markets, and stock indices. Rank the top 5 that would make the most informative tweets. Prioritize:
-1. Biggest percentage moves (price or odds shifts)
+Here are {count} data points from Polymarket, crypto markets, stock indices, and sentiment indicators. Rank the top 5 that would make the most informative tweets. Prioritize:
+1. CROSS-MARKET NARRATIVES (if present above the data points). These connect multiple markets and are always more valuable than single-source data points.
 2. Data points marked [ALERT] (significant movements)
-3. Cross-market patterns (e.g., Fed decision affecting both stocks and crypto)
-4. High volume or unusual activity
-5. Data that provides immediate value to traders and market watchers
+3. Cross-market patterns (e.g., Fed odds shifting while yields and crypto react)
+4. Biggest percentage moves (price or odds shifts)
+5. Extreme sentiment readings (Fear & Greed at extremes paired with price action)
+6. High volume or unusual activity
+
+A tweet that connects 2-3 markets is ALWAYS more valuable than one that reports a single number. Prefer data points that can be paired with other data points.
 
 AVOID: Stale data with no significant movement, duplicate data about the same asset, data without specific numbers.
 
@@ -81,18 +85,20 @@ Return ONLY a JSON array of the top 5 data point numbers, most significant first
 No commentary."""
 
 # --- System prompt (persistent persona for all LLM generation calls) ---
-SYSTEM_PROMPT = """You are the data engine behind a transparent AI Twitter bot that aggregates financial data from Polymarket, crypto markets, and stock indices into clear, accessible tweets.
+SYSTEM_PROMPT = """You are the analytical engine behind @MarketPulseBot, a financial data Twitter account known for connecting dots across markets that others miss.
 
 Your voice:
-- Professional, factual, and concise. You report data, not opinions.
-- Accessible to non-experts: explain jargon when used, prefer plain English.
-- Every tweet includes at least one specific number (price, percentage, volume).
-- Use comparisons to add context: "up 12% in 24h, highest since March", "volume 3x the 30-day average".
-- Neutral tone. Never bullish or bearish. Never "to the moon" or "crash incoming".
-- You may note patterns ("This is the third consecutive day of decline") but never predict outcomes.
-- Always factual. If data is delayed or uncertain, say so.
+- Analytical, factual, and sharp. You observe patterns in data, not just report numbers.
+- When data from multiple markets points in the same direction (or diverges), SAY SO. That is the value you provide.
+- Every tweet must include at least one specific number AND one piece of context that makes the number meaningful.
+- Context examples: "highest since March", "3x the 30-day average volume", "while Fed odds shifted the opposite direction", "despite VIX sitting at a 6-month low".
+- You note factual patterns and correlations but never predict outcomes or give advice.
+- Accessible to non-experts: if a concept needs explanation, one clause suffices.
+- Neutral tone. Never bullish or bearish. Report what IS happening, not what WILL happen.
 
-You are NOT a financial advisor. You are NOT predicting markets. You are a data aggregator that makes financial data accessible.
+You are NOT a financial advisor. Never give buy/sell recommendations. Never say "you should."
+
+When given NARRATIVE bundles (cross-market patterns), ALWAYS PRIORITIZE those over individual data points. A tweet that connects two markets is worth more than one that reports a single number.
 
 Formatting rules:
 - Start each tweet with a text tag: BREAKING: / JUST IN: / MARKET UPDATE: / ALERT: / DATA: (pick the most appropriate).
@@ -103,7 +109,7 @@ Formatting rules:
 - No em dashes. Use periods and line breaks.
 - Max 1 hashtag per tweet. Use $TICKER cashtags where appropriate ($BTC, $ETH, $SPX).
 - Numbers formatted clearly: $1.2B not $1,200,000,000. 12.4% not 0.124.
-- Max 200 characters (a source link + disclaimer are appended automatically).
+- Max 250 characters (a source link + disclaimer are appended automatically).
 
 NEVER use emojis.
 NEVER use: revolutionary, game-changer, to the moon, WAGMI, NGMI, rug pull (unless reporting one), HODL, diamond hands, paper hands, bullish, bearish, NFA (spell it out), DYOR (spell it out).
@@ -115,7 +121,7 @@ NEVER use em dashes (—)."""
 # The pipeline randomly selects 2-3 templates per batch for variety.
 
 _FORMAT_RULES = """
-LENGTH: 150-200 chars (a source link + disclaimer are appended automatically). Shorter is better.
+LENGTH: 150-250 chars (a source link + disclaimer are appended automatically). Shorter is better.
 Line breaks between data and context. Never a wall of text.
 NO emojis. Start with a text tag: BREAKING: / JUST IN: / MARKET UPDATE: / ALERT: / DATA:
 No hashtags unless directly relevant ($BTC is a cashtag, not a hashtag).
@@ -124,7 +130,7 @@ Do NOT include "Not financial advice" in your output."""
 
 GENERATION_TEMPLATES = {
     "market_snapshot": {
-        "weight": 2.5,
+        "weight": 1.5,
         "tweets_per_call": 3,
         "prompt": """Write 3 tweets summarizing today's key market movements. Each about a DIFFERENT market (Polymarket, crypto, stock indices).
 
@@ -148,7 +154,7 @@ CHART_DATA: [chart type, asset name, timeframe]""",
     },
 
     "polymarket_mover": {
-        "weight": 2.0,
+        "weight": 1.5,
         "tweets_per_call": 2,
         "prompt": """Write 2 tweets about the biggest movers on Polymarket prediction markets.
 
@@ -170,7 +176,7 @@ CHART_DATA: [odds, market name, 24h]""",
     },
 
     "crypto_movers": {
-        "weight": 2.0,
+        "weight": 1.5,
         "tweets_per_call": 2,
         "prompt": """Write 2 tweets about the biggest cryptocurrency movers in the last 24 hours.
 
@@ -276,8 +282,51 @@ OPTION_C: [option]
 OPTION_D: [option]""",
     },
 
+    "cross_market_narrative": {
+        "weight": 3.0,
+        "tweets_per_call": 2,
+        "prompt": """Write 2 tweets that each connect data from AT LEAST 2 different sources (Polymarket + crypto, or crypto + macro, or macro + Polymarket).
+
+RULES:
+- Each tweet MUST reference specific numbers from at least 2 sources.
+- Structure: "[Data point A from source 1]. Meanwhile, [data point B from source 2]." or "[Data A] while [Data B]."
+- The value is the CONNECTION between data points, not the individual numbers.
+- Use linking words: "meanwhile", "while", "at the same time", "despite", "even as", "across markets".
+- If NARRATIVE bundles are provided in the input, use them as your primary material.
+- Include source attribution for each data point referenced.
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [cross-market tweet]
+CHART_DATA: [bar, comparison, current]
+TWEET 2: [cross-market tweet]
+CHART_DATA: [bar, comparison, current]""",
+    },
+
+    "divergence_alert": {
+        "weight": 2.0,
+        "tweets_per_call": 1,
+        "prompt": """Write 1 tweet about a DIVERGENCE or unusual pattern between two markets. Things that usually move together moving apart, or vice versa.
+
+RULES:
+- Lead with the divergence: "X is up while Y is down" or "X and Y moving in lockstep today".
+- Include specific numbers for BOTH sides of the divergence.
+- One line of context: why this is unusual, when it last happened, or what it means.
+- If NARRATIVE bundles mention a divergence, use that data.
+- Source attribution for each data point.
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [divergence tweet]
+CHART_DATA: [bar, comparison, current]""",
+    },
+
     "comparison": {
-        "weight": 1.5,
+        "weight": 1.0,
         "tweets_per_call": 2,
         "prompt": """Write 2 tweets that compare two financial data points for perspective.
 
@@ -295,6 +344,47 @@ TWEET 1: [tweet]
 CHART_DATA: [bar, comparison, current]
 TWEET 2: [tweet]
 CHART_DATA: [bar, comparison, current]""",
+    },
+
+    "context_bomb": {
+        "weight": 2.0,
+        "tweets_per_call": 1,
+        "prompt": """Write 1 tweet that takes the SINGLE most interesting data point and surrounds it with maximum context to make it surprising or memorable.
+
+RULES:
+- Pick ONE number from the data. Make the reader say "wow, I didn't know that."
+- Add context that amplifies the number: historical comparison ("highest since X"), relative magnitude ("3x the average"), speed ("in just 2 hours"), or what was expected vs what happened.
+- Structure: "DATA: [the number]. [Context that makes it surprising]."
+- Cross-reference with other data if it adds context (e.g., "$BTC hit $90K. Meanwhile Fear & Greed at 85, highest since November.").
+- Source attribution.
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [context-rich tweet]
+CHART_DATA: [line, asset name, 7d]""",
+    },
+
+    "regime_check": {
+        "weight": 1.0,
+        "tweets_per_call": 1,
+        "prompt": """Write 1 tweet that characterizes the current market REGIME based on ALL available data. Paint the big picture.
+
+RULES:
+- Use data from multiple sources to describe the overall market mood/state.
+- Examples: "Risk-on across the board: stocks up, crypto up, VIX at X-month low, Polymarket recession odds at Y%."
+- Or: "Mixed signals: stocks rallying but crypto flat, VIX creeping up, gold at highs."
+- Or: "Fear is spreading: VIX at 28, $BTC down 4%, Fear & Greed at 19. But Polymarket recession odds still low at 15%."
+- This is a big-picture snapshot, not a single data point. Reference at least 3 different indicators.
+- Source attribution.
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [regime/mood tweet]
+CHART_DATA: [bar, market overview, current]""",
     },
 }
 

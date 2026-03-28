@@ -16,6 +16,7 @@ from storage.database import (
     update_post_status,
 )
 from sources.aggregator import fetch_all_sources, format_financial_data_for_prompt
+from sources.correlation_engine import detect_narratives
 from generator.provider_router import rank_articles, generate_posts
 from generator.mistral_generator import get_batch_id
 from publisher.x_publisher import post_tweet, publish_thread
@@ -59,6 +60,17 @@ def run_fetch_pipeline():
     saved, new_urls = save_articles(articles)
     result["articles_saved"] = saved
 
+    # Step 1b: Detect cross-source narratives (correlation engine)
+    try:
+        narratives = detect_narratives(articles)
+        result["narratives"] = [
+            {"pattern": n["pattern_type"], "label": n["label"], "strength": n["strength"]}
+            for n in narratives
+        ]
+    except Exception as e:
+        narratives = []
+        result["errors"].append(f"Narrative detection failed (non-fatal): {e}")
+
     # For financial data, we always process (data changes every fetch)
     # Unlike RSS, market data is time-sensitive and always relevant
 
@@ -84,7 +96,7 @@ def run_fetch_pipeline():
 
     # Step 3: LLM ranking
     try:
-        articles_text = format_financial_data_for_prompt(prefiltered)
+        articles_text = format_financial_data_for_prompt(prefiltered, narratives=narratives)
         rankings = rank_articles(articles_text, prefiltered, count=len(prefiltered))
         result["rankings"] = rankings
 
@@ -111,7 +123,7 @@ def run_fetch_pipeline():
 
     # Step 4: Generate posts
     try:
-        final_text = format_financial_data_for_prompt(selected)
+        final_text = format_financial_data_for_prompt(selected, narratives=narratives)
         posts = generate_posts(final_text)
 
         # Step 4b: Append source link + disclaimer to each post
@@ -176,7 +188,7 @@ def run_fetch_pipeline():
 
             # Auto-reject low quality + auto-approve high quality
             auto_reject = quality_config.get("auto_reject_below", 25.0)
-            auto_approve = quality_config.get("auto_approve_above", 60.0)
+            auto_approve = quality_config.get("auto_approve_above", 68.0)
             from storage.database import get_pending_posts
             pending = get_pending_posts()
             auto_rejected_count = 0

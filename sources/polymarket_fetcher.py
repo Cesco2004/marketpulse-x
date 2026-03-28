@@ -14,25 +14,61 @@ POLYMARKET_URL = "https://polymarket.com"
 # Alert threshold: odds shift > 8% triggers an alert
 ODDS_SHIFT_ALERT_THRESHOLD = 8.0
 
+# Financial relevance filter: only keep markets matching these keywords.
+# The Gamma API has no category filter, so we filter client-side.
+FINANCIAL_KEYWORDS = [
+    # Economy / monetary policy
+    "fed", "fomc", "rate cut", "rate hike", "interest rate", "recession",
+    "inflation", "cpi", "gdp", "unemployment", "jobs", "treasury",
+    "debt ceiling", "deficit", "stimulus",
+    # Trade / geopolitics (market-moving)
+    "tariff", "trade war", "sanction", "china", "eu", "nato",
+    "ukraine", "russia", "iran", "opec",
+    # Crypto / regulation
+    "bitcoin", "btc", "ethereum", "eth", "crypto", "sec", "etf",
+    "stablecoin", "cbdc", "binance", "coinbase", "defi",
+    # Markets / corporate
+    "s&p", "nasdaq", "stock", "ipo", "merger", "earnings",
+    "oil", "gold", "commodity", "dollar",
+    # Politics (market-moving only)
+    "election", "president", "congress", "regulation", "ban", "approval",
+    "supreme court", "impeach",
+]
+
+
+def _is_financially_relevant(question):
+    """Check if a Polymarket question is financially relevant based on keywords."""
+    q_lower = question.lower()
+    return any(kw in q_lower for kw in FINANCIAL_KEYWORDS)
+
 
 def fetch_polymarket(limit=30):
     """Fetch top active markets from Polymarket Gamma API.
 
+    Fetches 2x the limit and filters to financially-relevant markets only.
     Returns list of article-compatible dicts for the pipeline.
     """
     try:
-        markets = _fetch_active_markets(limit=limit)
+        # Fetch extra markets since we'll filter many out
+        markets = _fetch_active_markets(limit=limit * 2)
         if not markets:
             logger.warning("Polymarket: no markets returned")
             return []
 
         articles = []
+        filtered_count = 0
         for market in markets:
+            question = market.get("question", "")
+            if not _is_financially_relevant(question):
+                filtered_count += 1
+                continue
             article = _process_market(market)
             if article:
                 articles.append(article)
 
-        logger.info(f"Polymarket: fetched {len(articles)} markets")
+        if filtered_count:
+            logger.info(f"Polymarket: filtered out {filtered_count} non-financial markets")
+        logger.info(f"Polymarket: fetched {len(articles)} financially-relevant markets")
         return articles
 
     except Exception as e:

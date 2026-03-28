@@ -2,16 +2,19 @@
 
 ## Project Overview
 
-Transparent AI-powered Twitter bot that aggregates financial data from three sources into clear, accessible tweets:
-1. **Polymarket** - Prediction market odds shifts, volume spikes
+Transparent AI-powered Twitter bot that aggregates financial data from multiple sources, detects cross-market patterns, and generates analytical tweets that connect dots across markets:
+1. **Polymarket** - Prediction market odds shifts, volume spikes (financially filtered)
 2. **Crypto** - Top movers, BTC/ETH dominance, volume spikes (CoinGecko)
-3. **S&P 500 / Macro** - US indices, VIX, Treasury yields (Yahoo Finance / yfinance)
+3. **S&P 500 / Macro** - US indices, VIX, Treasury yields, DXY, gold, oil (Yahoo Finance / yfinance)
+4. **Sentiment** - Crypto Fear & Greed Index (alternative.me)
+5. **Economic Calendar** - Upcoming FOMC, CPI, NFP dates for event context
 
 ## Architecture
 
 ```
-Sources (Polymarket + CoinGecko + yfinance)
+Sources (Polymarket + CoinGecko + yfinance + Fear&Greed + Calendar)
   -> Aggregator (parallel fetch + dedup + alert detection)
+  -> Correlation Engine (detect cross-source narratives: risk-on/off, divergences, policy-to-price)
   -> Pipeline (rank -> generate tweets via LLM -> score -> generate charts)
   -> Scheduler (4-8 tweets/day + instant alerts on big moves)
   -> Publisher (X/Twitter API via tweepy)
@@ -34,6 +37,9 @@ Sources (Polymarket + CoinGecko + yfinance)
 | Polymarket fetcher | `sources/polymarket_fetcher.py` |
 | Crypto fetcher | `sources/crypto_fetcher.py` |
 | Macro fetcher | `sources/macro_fetcher.py` |
+| Sentiment fetcher | `sources/sentiment_fetcher.py` |
+| Economic calendar | `sources/calendar_fetcher.py` |
+| Correlation engine | `sources/correlation_engine.py` |
 | Source aggregator | `sources/aggregator.py` |
 | LLM generation | `generator/mistral_generator.py` |
 | Provider routing | `generator/provider_router.py` |
@@ -51,9 +57,15 @@ Sources (Polymarket + CoinGecko + yfinance)
 - Never include buy/sell recommendations in generated content
 - System prompt and templates live in `config.py`
 - All market data snapshots stored in `market_data` table for delta computation
-- Alert thresholds: >8% odds shift (Polymarket), >4% price move (crypto/indices)
-- Charts use dark theme with green (#00C853) up, red (#FF1744) down, blue (#2196F3) neutral
-- Free tier APIs only: Polymarket Gamma (no auth), CoinGecko (demo key), yfinance (no auth)
+- Alert thresholds: >8% odds shift (Polymarket), >4% price move (crypto), >2% index move (macro)
+- Polymarket markets filtered by financial keywords (no sports/entertainment)
+- Correlation engine detects 5 pattern types: risk-on/off, divergence, policy-to-price, volatility gap, dominance rotation
+- 10 generation templates with weighted random selection; cross-source templates have highest weights
+- Scoring rewards cross-source synthesis (+12 for 2 sources, +20 for 3+) and connection language (+8)
+- Auto-approve threshold: 68 (quality score). Auto-reject below 25.
+- Charts: dark theme, 6 types (line, bar, odds, pie, comparison, dual_overlay)
+- Macro tickers: S&P 500, NASDAQ, DJI, VIX, 3M/5Y/10Y/30Y Treasury, DXY, Gold, Oil
+- Free tier APIs only: Polymarket Gamma (no auth), CoinGecko (demo key), yfinance (no auth), alternative.me Fear&Greed (no auth)
 
 ## Commands
 

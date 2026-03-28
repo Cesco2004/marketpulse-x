@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from sources.polymarket_fetcher import fetch_polymarket
 from sources.crypto_fetcher import fetch_crypto
 from sources.macro_fetcher import fetch_macro, is_weekend
+from sources.sentiment_fetcher import fetch_sentiment
+from sources.calendar_fetcher import get_event_context_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +21,15 @@ def fetch_all_sources():
     all_articles = []
 
     # Fetch from all sources in parallel
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {}
 
         # Polymarket (always, 24/7)
         futures[executor.submit(fetch_polymarket)] = "polymarket"
         # Crypto (always, 24/7)
         futures[executor.submit(fetch_crypto)] = "crypto"
+        # Sentiment / Fear & Greed (always, 24/7)
+        futures[executor.submit(fetch_sentiment)] = "sentiment"
         # Macro (skip on weekends - no new data)
         if not is_weekend():
             futures[executor.submit(fetch_macro)] = "macro"
@@ -79,15 +83,42 @@ def _sort_by_significance(articles):
     return sorted(articles, key=sort_key)
 
 
-def format_financial_data_for_prompt(articles, max_items=10):
+def format_financial_data_for_prompt(articles, max_items=10, narratives=None):
     """Format financial data articles into a text block for LLM prompt.
 
     Returns a string with structured data that the LLM can use to generate tweets.
+    When narratives are provided, they appear first as prioritized cross-market patterns.
     """
     if not articles:
         return "No market data available."
 
     lines = []
+
+    # Economic calendar context (upcoming FOMC, CPI, NFP, etc.)
+    try:
+        event_context = get_event_context_for_prompt()
+        if event_context:
+            lines.append(event_context)
+    except Exception:
+        pass  # Non-fatal if calendar fails
+
+    # Narratives section (cross-market patterns from correlation engine)
+    if narratives:
+        lines.append("=== CROSS-MARKET NARRATIVES (PRIORITIZE THESE FOR TWEETS) ===")
+        lines.append("")
+        for i, narrative in enumerate(narratives, 1):
+            strength_pct = int(narrative["strength"] * 100)
+            lines.append(f"NARRATIVE {i}: {narrative['label']} (strength: {strength_pct}%)")
+            # List the bundled data points
+            for dp in narrative.get("data_points", []):
+                source = dp.get("source", "Unknown")
+                summary = dp.get("summary", "N/A")
+                lines.append(f"  - [{source}] {summary}")
+            lines.append(f"  Angle: {narrative['synthesis_hint']}")
+            lines.append("")
+        lines.append("=== INDIVIDUAL DATA POINTS (use if no narrative fits) ===")
+        lines.append("")
+
     for i, article in enumerate(articles[:max_items], 1):
         source_tag = article.get("source", "Unknown")
         asset_type = article.get("asset_type", "")

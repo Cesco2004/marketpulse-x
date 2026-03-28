@@ -14,11 +14,22 @@ VIX_SPIKE_THRESHOLD = 25.0
 
 # Tickers to track
 DEFAULT_TICKERS = {
+    # US indices
     "^GSPC": {"name": "S&P 500", "type": "index"},
     "^IXIC": {"name": "NASDAQ Composite", "type": "index"},
     "^DJI": {"name": "Dow Jones", "type": "index"},
+    # Volatility
     "^VIX": {"name": "VIX (Volatility Index)", "type": "volatility"},
+    # Yields (multiple maturities for yield curve analysis)
+    "^IRX": {"name": "3-Month T-Bill Yield", "type": "yield"},
+    "^FVX": {"name": "5Y Treasury Yield", "type": "yield"},
     "^TNX": {"name": "10Y Treasury Yield", "type": "yield"},
+    "^TYX": {"name": "30Y Treasury Yield", "type": "yield"},
+    # Currency
+    "DX-Y.NYB": {"name": "US Dollar Index (DXY)", "type": "currency"},
+    # Commodities
+    "GC=F": {"name": "Gold Futures", "type": "commodity"},
+    "CL=F": {"name": "Crude Oil (WTI)", "type": "commodity"},
 }
 
 
@@ -40,6 +51,11 @@ def fetch_macro():
         article = _fetch_ticker(yf, ticker_symbol, info, market_open)
         if article:
             articles.append(article)
+
+    # Compute yield curve spread (10Y - 3M) as a derived metric
+    yield_spread_article = _compute_yield_spread(articles)
+    if yield_spread_article:
+        articles.append(yield_spread_article)
 
     logger.info(f"Macro: fetched {len(articles)} indices/macro data points (market {'open' if market_open else 'closed'})")
     return articles
@@ -119,6 +135,20 @@ def _fetch_ticker(yf, ticker_symbol, info, market_open):
                 market_data_id=data_id,
             )
 
+        # Commodity/currency alert (reuse index threshold)
+        if info["type"] in ("commodity", "currency") and abs(daily_change) >= INDEX_MOVE_ALERT_THRESHOLD:
+            alert_level = "alert"
+            direction = "up" if daily_change > 0 else "down"
+            create_market_alert(
+                source="yahoo_finance",
+                asset_id=ticker_symbol,
+                asset_name=info["name"],
+                alert_type="price_spike" if daily_change > 0 else "price_drop",
+                magnitude=abs(daily_change),
+                description=f"{info['name']} {direction} {abs(daily_change):.1f}% to {_format_index(current_price)}",
+                market_data_id=data_id,
+            )
+
         # Build summary
         price_str = _format_index(current_price)
         market_status = "live" if market_open else "close"
@@ -127,12 +157,21 @@ def _fetch_ticker(yf, ticker_symbol, info, market_open):
         if weekly_change is not None:
             summary += f" Weekly: {weekly_change:+.1f}%."
 
+        # Type-specific summary overrides
         if ticker_symbol == "^VIX":
             summary = f"VIX at {current_price:.1f} ({daily_change:+.1f}% today)."
             if current_price >= VIX_SPIKE_THRESHOLD:
                 summary += " Elevated volatility."
-        elif ticker_symbol == "^TNX":
-            summary = f"10Y Treasury yield at {current_price:.2f}% ({daily_change:+.2f}pp today)."
+        elif info["type"] == "yield":
+            summary = f"{info['name']} at {current_price:.2f}% ({daily_change:+.2f}pp today)."
+        elif info["type"] == "commodity":
+            summary = f"{info['name']} at ${current_price:,.2f} ({daily_change:+.1f}% today)."
+            if weekly_change is not None:
+                summary += f" Weekly: {weekly_change:+.1f}%."
+        elif info["type"] == "currency":
+            summary = f"{info['name']} at {current_price:.2f} ({daily_change:+.1f}% today)."
+            if weekly_change is not None:
+                summary += f" Weekly: {weekly_change:+.1f}%."
 
         return {
             "title": f"{info['name']} Market Update",
@@ -150,6 +189,83 @@ def _fetch_ticker(yf, ticker_symbol, info, market_open):
     except Exception as e:
         logger.error(f"Macro fetch error for {ticker_symbol}: {e}")
         return None
+
+
+def _compute_yield_spread(articles):
+    """Compute 10Y-3M yield curve spread from fetched articles.
+
+    An inverted yield curve (negative spread) is a strong recession signal.
+    """
+    tnx_val = None
+    irx_val = None
+
+    for a in articles:
+        if a.get("asset_id") == "^TNX":
+            # TNX is stored as the yield value in summary
+            try:
+                import re
+                match = re.search(r"at ([\d.]+)%", a.get("summary", ""))
+                if match:
+                    tnx_val = float(match.group(1))
+            except (ValueError, AttributeError):
+                pass
+        elif a.get("asset_id") == "^IRX":
+            try:
+                import re
+                match = re.search(r"at ([\d.]+)", a.get("summary", ""))
+                if match:
+                    irx_val = float(match.group(1))
+            except (ValueError, AttributeError):
+                pass
+
+    if tnx_val is None or irx_val is None:
+        return None
+
+    spread = tnx_val - irx_val
+
+    # Save to DB
+    data_id, db_change = save_market_data(
+        source="yahoo_finance",
+        asset_id="yield_spread_10y_3m",
+        asset_name="10Y-3M Yield Spread",
+        metric_type="spread",
+        value=spread,
+        extra_data={
+            "tnx": tnx_val,
+            "irx": irx_val,
+            "inverted": spread < 0,
+        },
+    )
+
+    # Alert on yield curve inversion
+    alert_level = "normal"
+    if spread < 0:
+        alert_level = "alert"
+        create_market_alert(
+            source="yahoo_finance",
+            asset_id="yield_spread_10y_3m",
+            asset_name="Yield Curve",
+            alert_type="yield_curve_inversion",
+            magnitude=abs(spread),
+            description=f"Yield curve inverted: 10Y ({tnx_val:.2f}%) below 3M ({irx_val:.2f}%). Spread: {spread:.2f}pp.",
+            market_data_id=data_id,
+        )
+
+    status = "INVERTED" if spread < 0 else "normal"
+    summary = f"10Y-3M yield spread: {spread:+.2f}pp ({status}). 10Y: {tnx_val:.2f}%, 3M: {irx_val:.2f}%."
+
+    return {
+        "title": "Yield Curve Spread (10Y-3M)",
+        "url": "https://finance.yahoo.com/quote/%5ETNX",
+        "source": "Yahoo Finance",
+        "summary": summary,
+        "keyword_score": int(abs(spread) * 30) if spread < 0 else 10,
+        "matched_keywords": ["yield curve", "treasury"],
+        "asset_id": "yield_spread_10y_3m",
+        "asset_type": "macro",
+        "change_pct": db_change,
+        "alert_level": alert_level,
+    }
 
 
 def is_market_open():
