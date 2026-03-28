@@ -42,6 +42,28 @@ def _is_financially_relevant(question):
     return any(kw in q_lower for kw in FINANCIAL_KEYWORDS)
 
 
+def _is_market_expired(market):
+    """Check if a Polymarket market's endDate has already passed."""
+    end_date = market.get("endDate", "")
+    if not end_date:
+        return False  # No endDate = assume still active
+    try:
+        from dateutil import parser as dateparser
+        end_dt = dateparser.parse(end_date)
+        if end_dt.tzinfo is None:
+            from datetime import timezone
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        return datetime.now(end_dt.tzinfo) > end_dt
+    except Exception:
+        # Fallback: try simple ISO parse
+        try:
+            end_str = end_date[:10]  # "2026-03-15"
+            end_dt = datetime.strptime(end_str, "%Y-%m-%d")
+            return datetime.utcnow() > end_dt
+        except Exception:
+            return False
+
+
 def fetch_polymarket(limit=30):
     """Fetch top active markets from Polymarket Gamma API.
 
@@ -57,10 +79,14 @@ def fetch_polymarket(limit=30):
 
         articles = []
         filtered_count = 0
+        expired_count = 0
         for market in markets:
             question = market.get("question", "")
             if not _is_financially_relevant(question):
                 filtered_count += 1
+                continue
+            if _is_market_expired(market):
+                expired_count += 1
                 continue
             article = _process_market(market)
             if article:
@@ -68,6 +94,8 @@ def fetch_polymarket(limit=30):
 
         if filtered_count:
             logger.info(f"Polymarket: filtered out {filtered_count} non-financial markets")
+        if expired_count:
+            logger.info(f"Polymarket: filtered out {expired_count} expired markets")
         logger.info(f"Polymarket: fetched {len(articles)} financially-relevant markets")
         return articles
 

@@ -14,6 +14,7 @@ from storage.database import (
     get_quality_config,
     get_image_config,
     update_post_status,
+    expire_stale_posts,
 )
 from sources.aggregator import fetch_all_sources, format_financial_data_for_prompt
 from sources.correlation_engine import detect_narratives
@@ -43,6 +44,14 @@ def run_fetch_pipeline():
         "needs_review": 0,
         "errors": [],
     }
+
+    # Step 0: Expire stale tweets from previous fetch cycles (older than 4 hours)
+    try:
+        expired_count = expire_stale_posts(max_age_hours=4)
+        if expired_count:
+            result["expired_stale"] = expired_count
+    except Exception:
+        pass  # Non-fatal
 
     # Step 1: Fetch from all financial sources (Polymarket + CoinGecko + Yahoo Finance)
     try:

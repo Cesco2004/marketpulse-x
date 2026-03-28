@@ -307,18 +307,36 @@ class QuantumScheduler:
                 if self._stop_event.is_set():
                     break
 
-                # Step 6: Post
+                # Step 6: Post (with freshness check)
                 self._schedule.pop(0)
                 post = get_post_by_id(post_id)
                 if post and post["status"] == "approved":
-                    try:
-                        from pipeline import publish_post
-                        tweet_id, has_image = publish_post(post)
-                        mark_as_posted(post_id, tweet_id)
-                        img_tag = " (with chart)" if has_image else ""
-                        print(f"[Autopilot] Posted #{post_id}{img_tag} -> tweet {tweet_id}")
-                    except Exception as e:
-                        print(f"[Autopilot] Error posting #{post_id}: {e}")
+                    # Freshness gate: skip tweets older than 4 hours
+                    post_dict = dict(post)
+                    created_at = post_dict.get("created_at", "")
+                    is_stale = False
+                    if created_at:
+                        try:
+                            from dateutil import parser as dp
+                            created_dt = dp.parse(str(created_at))
+                            age_hours = (datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 3600
+                            if age_hours > 4:
+                                is_stale = True
+                                from storage.database import update_post_status
+                                update_post_status(post_id, "expired")
+                                print(f"[Autopilot] Skipped stale #{post_id} ({age_hours:.1f}h old)")
+                        except Exception:
+                            pass  # If we can't parse date, allow the post
+
+                    if not is_stale:
+                        try:
+                            from pipeline import publish_post
+                            tweet_id, has_image = publish_post(post)
+                            mark_as_posted(post_id, tweet_id)
+                            img_tag = " (with chart)" if has_image else ""
+                            print(f"[Autopilot] Posted #{post_id}{img_tag} -> tweet {tweet_id}")
+                        except Exception as e:
+                            print(f"[Autopilot] Error posting #{post_id}: {e}")
 
             except Exception as e:
                 print(f"[Autopilot] Loop error: {e}")

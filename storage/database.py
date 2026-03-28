@@ -654,6 +654,26 @@ def update_post_status(post_id, status):
     conn.close()
 
 
+def expire_stale_posts(max_age_hours=4):
+    """Expire (reject) pending and approved posts older than max_age_hours.
+
+    Called at the start of each fetch cycle to ensure only fresh tweets are postable.
+    Returns count of expired posts.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """UPDATE posts SET status = 'expired'
+           WHERE status IN ('pending_review', 'approved')
+           AND created_at <= datetime('now', ? || ' hours')""",
+        (f"-{max_age_hours}",),
+    )
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
 def update_post_content(post_id, content):
     conn = get_connection()
     cursor = conn.cursor()
