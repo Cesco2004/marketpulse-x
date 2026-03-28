@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
 """
-Quantum Brief Bot - CLI Orchestrator
+Market Pulse Bot - CLI Orchestrator
+
+Financial data aggregator: Polymarket + Crypto + S&P 500/Macro
 
 Usage:
-    python main.py fetch              Fetch RSS, score articles, rank with Mistral, generate posts
+    python main.py fetch              Fetch financial data, rank, generate tweets
     python main.py review             Review and approve/reject pending posts
     python main.py post               Post the next approved tweet immediately
-    python main.py run                Start the 24h scheduler daemon
+    python main.py run                Start the autopilot scheduler daemon
     python main.py status             Show current queue stats
+    python main.py alerts             Show pending market alerts
     python main.py verify             Verify API credentials
     python main.py kill [reason]      Activate kill switch (stops all API calls)
     python main.py unkill             Deactivate kill switch
     python main.py limits             Show current usage limits and today's usage
-    python main.py engage status      Show engagement system status
-    python main.py engage add @user   Add a target account to monitor
-    python main.py engage list        List target accounts
-    python main.py engage poll        Run one poll cycle manually
-    python main.py engage start       Start engagement monitor (foreground, Ctrl+C to stop)
-    python main.py engage start -d    Start engagement monitor as background daemon
-    python main.py engage stop        Stop the engagement monitor (daemon or in-process)
+    python main.py engage status      Show engagement system status (disabled by default)
 """
 
 import sys
@@ -40,10 +37,10 @@ from pipeline import run_fetch_pipeline
 
 
 def cmd_fetch():
-    """Fetch all sources (RSS + HN + Reddit), score + rank articles, generate posts."""
+    """Fetch financial data (Polymarket + CoinGecko + Yahoo Finance), rank, generate tweets."""
     print("\n=== FETCH & GENERATE ===\n")
 
-    print("[*] Running full pipeline (RSS + HackerNews + Reddit → rank → generate)...")
+    print("[*] Running financial data pipeline (Polymarket + CoinGecko + Yahoo Finance)...")
     result = run_fetch_pipeline()
 
     print(f"\n  Articles fetched: {result['articles_fetched']}")
@@ -443,12 +440,56 @@ def cmd_limits():
     print()
 
 
+def cmd_alerts():
+    """Show pending market alerts."""
+    print("\n=== MARKET ALERTS ===\n")
+
+    try:
+        from alerts.detector import get_alert_summary
+        summary = get_alert_summary()
+
+        stats = summary.get("stats", {})
+        pending = summary.get("pending_alerts", [])
+
+        print(f"  Alert stats:")
+        for status, count in sorted(stats.items()):
+            print(f"    {status}: {count}")
+        print()
+
+        print(f"  Thresholds:")
+        for name, value in summary.get("thresholds", {}).items():
+            print(f"    {name}: {value}")
+        print(f"  Max alert tweets/day: {summary.get('max_per_day', 3)}")
+        print()
+
+        if not pending:
+            print("  No pending alerts.\n")
+            return
+
+        print(f"  {len(pending)} pending alert(s):\n")
+        for alert in pending:
+            print(f"  --- Alert #{alert['id']} ---")
+            print(f"    Source:    {alert['source']}")
+            print(f"    Asset:    {alert['asset_name']}")
+            print(f"    Type:     {alert['alert_type']}")
+            print(f"    Magnitude: {alert['magnitude']:.1f}")
+            print(f"    Description: {alert.get('description', 'N/A')}")
+            print(f"    Detected: {alert.get('detected_at', 'N/A')}")
+            print()
+
+    except ImportError:
+        print("  Alerts module not available.\n")
+    except Exception as e:
+        print(f"  Error: {e}\n")
+
+
 COMMANDS = {
     "fetch": cmd_fetch,
     "review": cmd_review,
     "post": cmd_post,
     "run": cmd_run,
     "status": cmd_status,
+    "alerts": cmd_alerts,
     "verify": cmd_verify,
     "engage": cmd_engage,
     "kill": cmd_kill,

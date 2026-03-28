@@ -1,136 +1,103 @@
-"""Source aggregator: combines RSS, HackerNews, Reddit with cross-source dedup and boost."""
+"""Source aggregator: combines Polymarket, CoinGecko, and Yahoo Finance data with cross-source dedup."""
 
-import re
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from sources.rss_fetcher import fetch_all_feeds, fetch_all_feeds_from_db
-from sources.hackernews_fetcher import fetch_hackernews
-from sources.reddit_fetcher import fetch_reddit
+from sources.polymarket_fetcher import fetch_polymarket
+from sources.crypto_fetcher import fetch_crypto
+from sources.macro_fetcher import fetch_macro, is_weekend
 
-
-def _normalize_url(url):
-    """Normalize URL for dedup: strip protocol, www, trailing slash, query params."""
-    url = re.sub(r"^https?://(www\.)?", "", url).rstrip("/")
-    url = re.sub(r"\?.*$", "", url)
-    return url.lower()
-
-
-def _title_fingerprint(title):
-    """Rough title fingerprint for cross-source dedup."""
-    words = re.findall(r"[a-z]{4,}", title.lower())
-    return frozenset(words)
-
-
-def _get_subreddits_from_db():
-    """Load subreddit config from content_sources table if available."""
-    try:
-        from storage.database import get_content_sources
-        sources = get_content_sources("reddit")
-        if sources:
-            return [s["config_value"] for s in sources if s.get("config_value")]
-    except Exception:
-        pass
-    return None
+logger = logging.getLogger(__name__)
 
 
 def fetch_all_sources():
-    """Fetch from all enabled sources in parallel. Returns combined, deduplicated article list.
+    """Fetch from all financial sources in parallel. Returns combined, deduplicated article list.
 
-    Each article gets an extra 'source_count' field indicating how many sources reported it.
-    Articles appearing in multiple sources get a virality boost.
+    Each article has 'asset_id', 'asset_type', 'change_pct', and 'alert_level' fields.
+    Articles are sorted by significance (alert level first, then abs change).
     """
     all_articles = []
-    subreddits = _get_subreddits_from_db()
 
     # Fetch from all sources in parallel
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {}
 
-        # RSS feeds (primary, always enabled)
-        futures[executor.submit(_fetch_rss)] = "rss"
-        # HackerNews
-        futures[executor.submit(fetch_hackernews)] = "hackernews"
-        # Reddit
-        futures[executor.submit(fetch_reddit, subreddits)] = "reddit"
+        # Polymarket (always, 24/7)
+        futures[executor.submit(fetch_polymarket)] = "polymarket"
+        # Crypto (always, 24/7)
+        futures[executor.submit(fetch_crypto)] = "crypto"
+        # Macro (skip on weekends - no new data)
+        if not is_weekend():
+            futures[executor.submit(fetch_macro)] = "macro"
 
         for future in as_completed(futures):
             source_name = futures[future]
             try:
                 articles = future.result()
-                all_articles.extend(articles)
+                if articles:
+                    all_articles.extend(articles)
+                    logger.info(f"  {source_name}: {len(articles)} items")
             except Exception as e:
-                print(f"  Error from {source_name}: {e}")
+                logger.error(f"  Error from {source_name}: {e}")
 
-    # Cross-source deduplication and boost
-    return _deduplicate_and_boost(all_articles)
+    # Deduplicate and sort by significance
+    deduped = _deduplicate(all_articles)
+    sorted_articles = _sort_by_significance(deduped)
 
-
-def _fetch_rss():
-    """Fetch RSS from DB feeds, fallback to config."""
-    articles = fetch_all_feeds_from_db()
-    if not articles:
-        articles = fetch_all_feeds()
-    return articles
+    logger.info(f"Aggregator: {len(sorted_articles)} total items after dedup")
+    return sorted_articles
 
 
-def _deduplicate_and_boost(articles):
-    """Deduplicate articles across sources. Articles found in multiple sources get boosted.
+def _deduplicate(articles):
+    """Deduplicate articles by asset_id within same source type.
 
-    Dedup strategy:
-    1. Exact URL match (after normalization)
-    2. Title fingerprint overlap (Jaccard > 0.6)
+    For financial data, we don't want multiple entries for the same asset
+    from the same source in one fetch cycle.
     """
-    # Group by normalized URL
-    url_groups = {}
-    for article in articles:
-        norm_url = _normalize_url(article.get("url", ""))
-        if norm_url in url_groups:
-            url_groups[norm_url].append(article)
-        else:
-            url_groups[norm_url] = [article]
-
-    # Second pass: merge groups with similar titles
-    groups = list(url_groups.values())
-    merged = []
-    used = set()
-
-    for i, group in enumerate(groups):
-        if i in used:
-            continue
-
-        fp_i = _title_fingerprint(group[0]["title"])
-
-        for j in range(i + 1, len(groups)):
-            if j in used:
-                continue
-            fp_j = _title_fingerprint(groups[j][0]["title"])
-
-            if fp_i and fp_j:
-                intersection = fp_i & fp_j
-                union = fp_i | fp_j
-                similarity = len(intersection) / len(union) if union else 0
-                if similarity > 0.6:
-                    group.extend(groups[j])
-                    used.add(j)
-
-        merged.append(group)
-        used.add(i)
-
-    # Pick best article from each group, add source_count and cross-source boost
+    seen = set()
     result = []
-    for group in merged:
-        # Pick the article with the best engagement signal
-        best = max(group, key=lambda a: a.get("engagement_score", 0))
 
-        source_count = len(set(a.get("source", "") for a in group))
-        best["source_count"] = source_count
-
-        # Cross-source virality boost: multiply topic_weight
-        if source_count >= 3:
-            best["topic_weight"] = best.get("topic_weight", 1.0) * 2.0
-        elif source_count >= 2:
-            best["topic_weight"] = best.get("topic_weight", 1.0) * 1.5
-
-        result.append(best)
+    for article in articles:
+        key = (article.get("asset_type", ""), article.get("asset_id", ""))
+        if key not in seen:
+            seen.add(key)
+            result.append(article)
 
     return result
+
+
+def _sort_by_significance(articles):
+    """Sort articles by significance: alerts first, then by absolute change percentage."""
+
+    def sort_key(article):
+        # Alert level: alert > normal
+        alert_priority = 0 if article.get("alert_level") == "alert" else 1
+        # Absolute change percentage (higher = more significant)
+        change = abs(article.get("change_pct") or 0)
+        return (alert_priority, -change)
+
+    return sorted(articles, key=sort_key)
+
+
+def format_financial_data_for_prompt(articles, max_items=10):
+    """Format financial data articles into a text block for LLM prompt.
+
+    Returns a string with structured data that the LLM can use to generate tweets.
+    """
+    if not articles:
+        return "No market data available."
+
+    lines = []
+    for i, article in enumerate(articles[:max_items], 1):
+        source_tag = article.get("source", "Unknown")
+        asset_type = article.get("asset_type", "")
+        alert_tag = " [ALERT]" if article.get("alert_level") == "alert" else ""
+
+        lines.append(f"--- Data Point {i} ({source_tag}){alert_tag} ---")
+        lines.append(f"Title: {article['title']}")
+        lines.append(f"Type: {asset_type}")
+        lines.append(f"Summary: {article.get('summary', 'N/A')}")
+        lines.append(f"URL: {article.get('url', 'N/A')}")
+        lines.append("")
+
+    return "\n".join(lines)

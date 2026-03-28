@@ -5,6 +5,7 @@ Returns structured data instead of printing.
 
 import json
 
+import config
 from storage.database import (
     save_articles,
     save_posts,
@@ -14,8 +15,7 @@ from storage.database import (
     get_image_config,
     update_post_status,
 )
-from sources.rss_fetcher import keyword_prefilter, format_articles_for_prompt
-from sources.aggregator import fetch_all_sources
+from sources.aggregator import fetch_all_sources, format_financial_data_for_prompt
 from generator.provider_router import rank_articles, generate_posts
 from generator.mistral_generator import get_batch_id
 from publisher.x_publisher import post_tweet, publish_thread
@@ -24,7 +24,7 @@ from limiter import UsageLimitReached
 
 
 def run_fetch_pipeline():
-    """Fetch RSS → keyword score → Mistral rank → generate posts → score → find images.
+    """Fetch financial data → rank → generate posts → score → generate charts.
     Returns a dict with results at each stage."""
 
     result = {
@@ -43,7 +43,7 @@ def run_fetch_pipeline():
         "errors": [],
     }
 
-    # Step 1: Fetch from all sources (RSS + HackerNews + Reddit, with cross-source dedup)
+    # Step 1: Fetch from all financial sources (Polymarket + CoinGecko + Yahoo Finance)
     try:
         articles = fetch_all_sources()
         result["articles_fetched"] = len(articles)
@@ -52,18 +52,15 @@ def run_fetch_pipeline():
         return result
 
     if not articles:
-        result["errors"].append("No articles found from RSS feeds.")
+        result["errors"].append("No market data found from financial sources.")
         return result
 
     # Save articles to DB (returns count + list of new URLs)
     saved, new_urls = save_articles(articles)
     result["articles_saved"] = saved
 
-    # Short-circuit: no new articles → skip LLM calls, save tokens
-    if saved == 0:
-        result["success"] = True
-        result["skipped_reason"] = "no_new_articles"
-        return result
+    # For financial data, we always process (data changes every fetch)
+    # Unlike RSS, market data is time-sensitive and always relevant
 
     # Budget-aware: skip generation if auto-throttle says so
     try:
@@ -76,18 +73,18 @@ def run_fetch_pipeline():
     except Exception:
         pass
 
-    # Step 2: Keyword pre-filter (only new articles)
-    new_url_set = set(new_urls)
-    new_articles = [a for a in articles if a.get("url") in new_url_set]
-    prefiltered = keyword_prefilter(new_articles, count=10)
+    # Step 2: Pre-filter (sort by significance, take top movers)
+    # Financial data is already sorted by significance from the aggregator
+    prefiltered = articles[:10]  # Top 10 most significant data points
     result["prefiltered"] = [
-        {"title": a["title"], "source": a["source"], "score": a["keyword_score"], "keywords": a["matched_keywords"]}
+        {"title": a["title"], "source": a["source"], "score": a.get("keyword_score", 0),
+         "keywords": a.get("matched_keywords", [])}
         for a in prefiltered
     ]
 
-    # Step 3: Mistral ranking
+    # Step 3: LLM ranking
     try:
-        articles_text = format_articles_for_prompt(prefiltered)
+        articles_text = format_financial_data_for_prompt(prefiltered)
         rankings = rank_articles(articles_text, prefiltered, count=len(prefiltered))
         result["rankings"] = rankings
 
@@ -109,16 +106,30 @@ def run_fetch_pipeline():
         result["errors"].append(f"Usage limit: {e}")
         return result
     except Exception as e:
-        result["errors"].append(f"Mistral ranking failed: {e}")
+        result["errors"].append(f"LLM ranking failed: {e}")
         selected = prefiltered[:5]
 
     # Step 4: Generate posts
     try:
-        final_text = format_articles_for_prompt(selected)
+        final_text = format_financial_data_for_prompt(selected)
         posts = generate_posts(final_text)
 
-        # Step 4b: Filter out posts that are too long or too short for Twitter
-        posts = [p for p in posts if 20 < len(p["content"]) <= 280]
+        # Step 4b: Append source link + disclaimer to each post
+        disclaimer = getattr(config, "DISCLAIMER", "\n\nNot financial advice.")
+        for post in posts:
+            content = post["content"].rstrip()
+            # Don't double-add disclaimer
+            if "not financial advice" not in content.lower():
+                # Find the best matching source URL for this tweet
+                source_url = _find_best_source_url(content, selected)
+                if source_url:
+                    content = content + "\n\n" + source_url
+                content = content + "\n\n" + "Not financial advice."
+            post["content"] = content
+
+        # Step 4c: Filter out posts that are too long or too short for Twitter
+        # Twitter counts URLs as 23 chars regardless of actual length
+        posts = [p for p in posts if 20 < _twitter_length(p["content"]) <= 300]
 
         # Step 5: Score each post (with duplicate detection)
         quality_config = get_quality_config()
@@ -145,11 +156,13 @@ def run_fetch_pipeline():
                 "below_minimum": scores["below_minimum"],
                 "substance": scores.get("substance", {}).get("score"),
                 "variety": scores.get("variety", {}).get("score"),
+                "tone": scores.get("tone", {}).get("score"),
+                "data_accuracy": scores.get("data_accuracy", {}).get("score"),
             })
             # Add this post to history so next posts in batch also check against it
             history.append({"content": post["content"]})
 
-        # Step 6: Find images for posts
+        # Step 6: Generate chart images for posts
         source_ids = [a.get("url", "") for a in selected]
         _attach_images_to_posts(posts, source_ids)
 
@@ -180,7 +193,7 @@ def run_fetch_pipeline():
             result["auto_approved"] = auto_approved_count
             result["needs_review"] = len(posts) - auto_approved_count - auto_rejected_count
         else:
-            result["errors"].append("Mistral returned no posts.")
+            result["errors"].append("LLM returned no posts.")
     except UsageLimitReached as e:
         result["errors"].append(f"Usage limit: {e}")
     except Exception as e:
@@ -190,10 +203,9 @@ def run_fetch_pipeline():
 
 
 def _attach_images_to_posts(posts, source_ids):
-    """Find and score images for posts. Modifies posts in-place."""
+    """Generate chart images for posts. Modifies posts in-place."""
     try:
-        from images.fetcher import find_image_for_post, should_attach_image, download_image
-        from images.scorer import score_image
+        from images.fetcher import find_image_for_post, should_attach_image
     except ImportError:
         return  # images module not installed yet
 
@@ -201,51 +213,87 @@ def _attach_images_to_posts(posts, source_ids):
     if not image_config.get("images_enabled", 1):
         return
 
-    min_score = image_config.get("min_image_score", 50.0)
-    used_image_urls = set()  # Track used images to avoid duplicates
-
-    # Distribute source articles across posts (round-robin instead of all-same)
-    num_sources = len(source_ids)
-
-    for i, post in enumerate(posts):
+    for post in posts:
         if not should_attach_image(post.get("type", "")):
             continue
 
         try:
-            # Give each post a different primary article to try first
-            rotated_sources = []
-            if num_sources > 0:
-                start = i % num_sources
-                rotated_sources = source_ids[start:] + source_ids[:start]
+            # Use chart_hint from LLM output (CHART_DATA line) if available
+            chart_hint = post.get("chart_hint") or post.get("image_hint")
 
-            # Use image_hint from LLM if available for better search keywords
-            search_text = post.get("image_hint") or post["content"]
-
-            img_url, img_source = find_image_for_post(
-                search_text, json.dumps(rotated_sources), image_config,
-                exclude_urls=used_image_urls,
+            img_path, img_source = find_image_for_post(
+                post["content"],
+                chart_hint=chart_hint,
+                chart_data_json=post.get("chart_data_json"),
             )
-            if not img_url:
+            if not img_path:
                 continue
 
-            local_path = download_image(img_url, post.get("type", "0"))
-            if not local_path:
-                continue
-
-            score_result = score_image(local_path, img_source)
-            if score_result["score"] >= min_score:
-                post["image_url"] = img_url
-                post["image_path"] = local_path
-                post["image_source"] = img_source
-                post["image_score"] = score_result["score"]
-                post["has_image"] = 1
-                used_image_urls.add(img_url)  # Don't reuse this image
+            post["image_url"] = img_path  # For charts, URL = local path
+            post["image_path"] = img_path
+            post["image_source"] = img_source or "chart"
+            post["image_score"] = 80.0  # Charts are always valid
+            post["has_image"] = 1
         except Exception:
             continue  # Skip image on any error, don't break pipeline
 
 
+def _find_best_source_url(tweet_text, articles):
+    """Find the most relevant source URL for a tweet by matching tickers and keywords."""
+    import re
+    text_lower = tweet_text.lower()
+
+    # Extract tickers from tweet ($BTC, $ETH, etc.)
+    tickers = set(re.findall(r"\$([A-Z]{2,5})\b", tweet_text))
+
+    best_url = None
+    best_score = 0
+
+    for article in articles:
+        url = article.get("url", "")
+        if not url or url.startswith("http") is False:
+            continue
+
+        score = 0
+        # Match by ticker in article keywords or title
+        for ticker in tickers:
+            if ticker.lower() in article.get("title", "").lower():
+                score += 10
+            if ticker in article.get("matched_keywords", []):
+                score += 5
+
+        # Match by source name
+        source = article.get("source", "").lower()
+        if "polymarket" in text_lower and "polymarket" in source.lower():
+            score += 8
+        if "coingecko" in text_lower and "coingecko" in source.lower():
+            score += 8
+        if "yahoo" in text_lower and "yahoo" in source.lower():
+            score += 8
+
+        # Match by asset name in tweet
+        title_words = article.get("title", "").lower().split()
+        for word in title_words:
+            if len(word) >= 4 and word in text_lower:
+                score += 2
+
+        if score > best_score:
+            best_score = score
+            best_url = url
+
+    return best_url if best_score >= 2 else None
+
+
+def _twitter_length(text):
+    """Estimate Twitter character count (URLs count as 23 chars via t.co)."""
+    import re
+    # Replace URLs with 23-char placeholder
+    no_urls = re.sub(r"https?://\S+", "x" * 23, text)
+    return len(no_urls)
+
+
 def publish_post(post):
-    """Publish a single post with optional image, poll, or thread. Returns (tweet_id, has_image).
+    """Publish a single post with optional chart image, poll, or thread. Returns (tweet_id, has_image).
     Accepts both dict and sqlite3.Row objects.
     """
     # Convert sqlite3.Row to dict if needed
@@ -254,7 +302,7 @@ def publish_post(post):
 
     media_ids = None
 
-    # Upload image if present
+    # Upload chart image if present
     if post.get("has_image") and post.get("image_path"):
         try:
             from images.uploader import upload_and_cleanup

@@ -13,30 +13,32 @@ DEFAULT_CONFIG = {
         "synergy", "deep dive", "robust", "seamlessly", "tapestry", "embark",
         "pivotal", "multifaceted", "notably", "essentially", "furthermore",
         "transformative", "disruptive",
+        # Financial AI buzzwords
+        "to the moon", "diamond hands", "paper hands", "WAGMI", "NGMI",
+        "disruptive fintech", "paradigm shift in defi",
     ],
     "ai_emdash_penalty": 15,
     "ai_phrase_penalty": 10,
     "readability_enabled": True,
     "readability_jargon_list": [
-        "decoherence", "hamiltonian", "eigenstate", "annealing",
-        "qubit fidelity", "hilbert space", "topological", "lagrangian",
-        "bosonic", "fermionic",
+        # Financial jargon that's too obscure for general audience
+        "contango", "backwardation", "delta hedging", "gamma squeeze",
+        "implied volatility skew", "convexity", "duration risk",
+        "monte carlo", "sharpe ratio", "sortino ratio",
     ],
     "readability_jargon_penalty": 8,
     "readability_max_grade_level": 10,
-    "emoji_enabled": True,
-    "emoji_preferred": [
-        "\U0001f6a8", "\U0001f525", "\u26a1", "\U0001f4a1", "\U0001f680",
-        "\U0001f9e0", "\U0001f440", "\U0001f4c8", "\U0001f4a5", "\u2728",
-        "\U0001f52c", "\U0001f310", "\U0001f4b0", "\U0001f916", "\U0001f512",
-    ],
-    "emoji_leading_bonus": 25,
-    "weight_substance": 0.25,
-    "weight_variety": 0.20,
+    "emoji_enabled": False,  # Disabled: professional tone, no emojis
+    "emoji_preferred": [],
+    "emoji_leading_bonus": 0,
+    "weight_substance": 0.30,
+    "weight_variety": 0.15,
     "weight_ai": 0.15,
-    "weight_readability": 0.10,
-    "weight_emoji": 0.10,
-    "weight_vibes": 0.20,
+    "weight_readability": 0.15,
+    "weight_emoji": 0.00,     # Disabled: no emojis in professional bot
+    "weight_tone": 0.25,      # Replaces weight_vibes (increased from 0.20)
+    "weight_vibes": 0.00,     # Deprecated, kept for DB compat
+    "weight_data_accuracy": 0.20,  # New: disclaimer, numbers, no predictions
     "min_quality_score": 50.0,
     "auto_reject_below": 30.0,
 }
@@ -310,7 +312,12 @@ def score_emoji_compliance(text, config=None):
 
 
 def score_vibes(text, config=None):
-    """Score tweet for human voice / viral potential. Rewards casual, punchy writing."""
+    """Legacy wrapper: redirects to score_tone() for financial bot."""
+    return score_tone(text, config)
+
+
+def score_tone(text, config=None):
+    """Score tweet for professional, factual tone. Rewards data-driven, neutral writing."""
     score = 50  # Start neutral
     bonuses = []
     penalties = []
@@ -319,60 +326,138 @@ def score_vibes(text, config=None):
     text_lower = text.lower()
     char_count = len(clean)
 
-    # Length sweet spot: 140-180 chars
-    if 140 <= char_count <= 180:
-        score += 20
-        bonuses.append("Sweet spot length 140-180 (+20)")
-    elif char_count <= 220:
-        score += 10
-        bonuses.append("Acceptable length <=220 (+10)")
-    elif char_count > 240:
+    # Length sweet spot (includes auto-appended link ~23 chars + disclaimer ~25 chars)
+    if 120 <= char_count <= 220:
+        score += 15
+        bonuses.append(f"Good length {char_count} chars (+15)")
+    elif 80 <= char_count <= 280:
+        score += 8
+        bonuses.append(f"Acceptable length {char_count} chars (+8)")
+    elif char_count > 280:
         score -= 20
         penalties.append(f"Too long: {char_count} chars (-20)")
+    elif char_count < 60:
+        score -= 10
+        penalties.append(f"Too short: {char_count} chars (-10)")
 
-    # Contractions bonus (human signal)
-    contractions = ["it's", "we're", "here's", "don't", "won't", "can't",
-                    "isn't", "that's", "what's", "doesn't", "they're"]
-    contraction_count = sum(1 for c in contractions if c in text_lower)
-    if contraction_count >= 2:
+    # Text tag bonus (BREAKING:, JUST IN:, etc.)
+    text_tags = ["breaking:", "just in:", "market update:", "alert:", "data:"]
+    if any(text_lower.lstrip().startswith(tag) for tag in text_tags):
         score += 15
-        bonuses.append(f"Multiple contractions ({contraction_count}) (+15)")
-    elif contraction_count == 1:
-        score += 8
-        bonuses.append("Contraction used (+8)")
+        bonuses.append("Text tag opener (+15)")
 
-    # Question ending bonus
-    if clean.rstrip().endswith("?"):
+    # Emoji penalty (professional bot = no emojis)
+    if EMOJI_RE.search(text):
+        score -= 10
+        penalties.append("Contains emoji (-10)")
+
+    # Source attribution bonus
+    attributions = ["via polymarket", "coingecko", "yahoo finance", "polygon"]
+    if any(a in text_lower for a in attributions):
         score += 15
-        bonuses.append("Ends with question (+15)")
+        bonuses.append("Source attribution (+15)")
 
-    # Casual language bonus (Grok guide phrases)
-    casual_phrases = [
-        "the thing is", "honestly", "damn", "lowkey", "fr ",
-        "the crazy part", "here's the deal", "turns out",
-        "apparently", "lol", "are we cooked", "or am i",
-        "ngl", "the wildest part",
-    ]
-    if any(p in text_lower for p in casual_phrases):
+    # Cashtag / ticker bonus ($BTC, $ETH, $SPX, ^GSPC)
+    if re.search(r"\$[A-Z]{2,5}\b", text) or re.search(r"\^[A-Z]{2,}", text):
         score += 10
-        bonuses.append("Casual voice (+10)")
+        bonuses.append("Ticker/cashtag used (+10)")
 
-    # Community language bonus ("we", "us", "our")
-    if re.search(r"\b(we|us|our)\b", text_lower):
-        score += 5
-        bonuses.append("Community language (+5)")
+    # Comparison/context bonus (adds value beyond raw number)
+    context_phrases = [
+        "highest since", "lowest since", "first time", "consecutive",
+        "compared to", "up from", "down from", "vs", "versus",
+        "week ago", "month ago", "year ago", "daily average",
+        "in 24h", "in the last", "since january", "since february",
+        "since march",
+    ]
+    if any(p in text_lower for p in context_phrases):
+        score += 10
+        bonuses.append("Historical context (+10)")
 
-    # Natural pause bonus (ellipsis)
-    if "..." in text or "\u2026" in text:
-        score += 5
-        bonuses.append("Natural pause (+5)")
+    # Neutral tone check: penalize opinion/prediction language
+    opinion_words = [
+        "to the moon", "crash incoming", "gonna pump", "gonna dump",
+        "buy now", "sell now", "you should", "i think will",
+        "bullish", "bearish", "diamond hands", "paper hands",
+        "trust me", "mark my words", "guaranteed",
+    ]
+    for phrase in opinion_words:
+        if phrase in text_lower:
+            score -= 15
+            penalties.append(f'Opinion/prediction: "{phrase}" (-15)')
+
+    # Penalty for casual slang (wrong tone for financial bot)
+    casual_slang = [
+        "damn", "lowkey", "fr ", "lol", "are we cooked",
+        "ngl", "bruh", "lfg", "wagmi", "ngmi",
+    ]
+    for slang in casual_slang:
+        if slang in text_lower:
+            score -= 10
+            penalties.append(f'Casual slang: "{slang.strip()}" (-10)')
 
     score = max(min(score, 100), 0)
     return {
         "score": score,
         "bonuses": bonuses,
         "penalties": penalties,
-        "details": f"{len(bonuses)} vibes signals, {len(penalties)} issues",
+        "details": f"{len(bonuses)} tone signals, {len(penalties)} issues",
+    }
+
+
+def score_data_accuracy(text, config=None):
+    """Score tweet for data accuracy markers. Checks disclaimer, numbers, no predictions."""
+    score = 50  # Start neutral
+    bonuses = []
+    penalties = []
+    text_lower = text.lower()
+
+    # Disclaimer check (critical)
+    if "not financial advice" in text_lower:
+        score += 20
+        bonuses.append("Disclaimer present (+20)")
+    else:
+        score -= 30
+        penalties.append("Missing disclaimer (-30)")
+
+    # At least one number required
+    has_number = bool(re.search(r"\d", text))
+    if has_number:
+        score += 15
+        bonuses.append("Contains number (+15)")
+    else:
+        score -= 20
+        penalties.append("No numbers in financial tweet (-20)")
+
+    # Percentage or dollar amount (strong data signal)
+    if re.search(r"\d+\.?\d*%", text) or re.search(r"\$[\d,.]+", text):
+        score += 10
+        bonuses.append("Specific financial data (+10)")
+
+    # Character count under 280 (Twitter limit)
+    if len(text) <= 280:
+        score += 5
+        bonuses.append("Within character limit (+5)")
+    else:
+        score -= 20
+        penalties.append(f"Over 280 chars: {len(text)} (-20)")
+
+    # No prediction language
+    predictions = [
+        "will reach", "will hit", "going to ", "expect to see",
+        "price target", "my prediction", "calling it now",
+    ]
+    for pred in predictions:
+        if pred in text_lower:
+            score -= 15
+            penalties.append(f'Prediction language: "{pred}" (-15)')
+
+    score = max(min(score, 100), 0)
+    return {
+        "score": score,
+        "bonuses": bonuses,
+        "penalties": penalties,
+        "details": f"{len(bonuses)} accuracy signals, {len(penalties)} issues",
     }
 
 
@@ -709,13 +794,14 @@ def score_duplicate(text, existing_posts):
 def score_post(text, config=None, existing_posts=None):
     """Compute composite quality score for a tweet. Returns full breakdown.
 
-    6-component system:
-    - Substance (25%): Is the content specific and informative?
-    - Vibes (20%): Does it sound human, casual, and viral?
-    - Variety (20%): Different from recent tweets in structure and topic?
+    7-component system (financial data bot):
+    - Substance (30%): Specific numbers, entities, data density
+    - Data Accuracy (20%): Disclaimer present, numbers, no predictions
+    - Tone (20%): Professional, neutral, source attribution
+    - Variety (15%): Different from recent tweets in structure and topic
     - Anti-AI (15%): Avoids AI-tell patterns
-    - Emoji/Format (10%): Correct formatting
-    - Readability (10%): Accessible language
+    - Readability (15%): Accessible language
+    - Format (5%): Emoji and formatting
     """
     cfg = _load_config(config)
 
@@ -724,27 +810,35 @@ def score_post(text, config=None, existing_posts=None):
     emoji = score_emoji_compliance(text, cfg)
     substance = score_substance(text, cfg)
     variety = score_variety(text, existing_posts or [], cfg)
-    vibes = score_vibes(text, cfg)
+    tone = score_tone(text, cfg)
+    data_accuracy = score_data_accuracy(text, cfg)
 
     # Legacy duplicate check (kept as hard blocker for near-duplicates)
     duplicate = score_duplicate(text, existing_posts or [])
 
-    # 6-component weighting
-    w_substance = cfg.get("weight_substance", 0.25)
-    w_variety = cfg.get("weight_variety", 0.20)
+    # 7-component weighting
+    w_substance = cfg.get("weight_substance", 0.30)
+    w_data_accuracy = cfg.get("weight_data_accuracy", 0.20)
+    w_tone = cfg.get("weight_tone", 0.20)
+    w_variety = cfg.get("weight_variety", 0.15)
     w_ai = cfg.get("weight_ai", 0.15)
-    w_read = cfg.get("weight_readability", 0.10)
-    w_emoji = cfg.get("weight_emoji", 0.10)
-    w_vibes = cfg.get("weight_vibes", 0.20)
+    w_read = cfg.get("weight_readability", 0.15)
+    w_emoji = cfg.get("weight_emoji", 0.05)
 
-    overall = (
-        substance["score"] * w_substance
-        + vibes["score"] * w_vibes
-        + variety["score"] * w_variety
-        + ai["score"] * w_ai
-        + readability["score"] * w_read
-        + emoji["score"] * w_emoji
-    )
+    # Normalize weights to sum to 1.0
+    total_weight = w_substance + w_data_accuracy + w_tone + w_variety + w_ai + w_read + w_emoji
+    if total_weight > 0:
+        overall = (
+            substance["score"] * (w_substance / total_weight)
+            + data_accuracy["score"] * (w_data_accuracy / total_weight)
+            + tone["score"] * (w_tone / total_weight)
+            + variety["score"] * (w_variety / total_weight)
+            + ai["score"] * (w_ai / total_weight)
+            + readability["score"] * (w_read / total_weight)
+            + emoji["score"] * (w_emoji / total_weight)
+        )
+    else:
+        overall = 50.0
 
     # Legacy duplicate as hard blocker (entity dedup in variety handles soft cases)
     if duplicate["score"] < 100:
@@ -757,13 +851,16 @@ def score_post(text, config=None, existing_posts=None):
         substance["penalties"] + variety["penalties"]
         + ai["penalties"] + readability["penalties"]
         + emoji["penalties"] + duplicate["penalties"]
-        + vibes.get("penalties", [])
+        + tone.get("penalties", [])
+        + data_accuracy.get("penalties", [])
     )
 
     return {
         "overall": overall,
         "substance": substance,
-        "vibes": vibes,
+        "tone": tone,
+        "data_accuracy": data_accuracy,
+        "vibes": tone,  # Backward compat alias
         "variety": variety,
         "ai": ai,
         "readability": readability,

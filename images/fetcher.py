@@ -1,251 +1,246 @@
+"""Image fetcher: generates chart images for tweets using matplotlib."""
+
 import os
-import re
 import json
-import hashlib
+import logging
 from datetime import datetime
 
-import requests
-from bs4 import BeautifulSoup
-
 import config
+from images.chart_generator import generate_chart
+from storage.database import get_market_data_history, get_chart_config
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
-
-STOPWORDS = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "need", "dare", "ought",
-    "this", "that", "these", "those", "and", "but", "or", "nor", "not",
-    "for", "with", "about", "from", "into", "through", "during", "before",
-    "after", "above", "below", "between", "out", "off", "over", "under",
-    "again", "further", "then", "once", "here", "there", "when", "where",
-    "why", "how", "all", "each", "every", "both", "few", "more", "most",
-    "other", "some", "such", "only", "own", "same", "than", "too", "very",
-    "just", "because", "much", "now", "also", "back", "new", "way",
-    "breaking", "tweet", "post", "fact", "take", "people", "realize",
-    "don't", "here's", "what", "it's", "they", "them", "their", "you",
-    "your", "most", "many", "still", "even", "well", "almost",
-}
+logger = logging.getLogger(__name__)
 
 
 def should_attach_image(post_type):
-    """Decide if this tweet type should get an image."""
-    # Engagement questions perform better text-only
-    if post_type == "question":
+    """Decide if this tweet type should get a chart image."""
+    # Most financial tweets benefit from a chart
+    # Polls and very short tweets don't need charts
+    if post_type == "poll":
         return False
     return True
 
 
-def extract_article_image(article_url):
-    """Extract og:image or twitter:image from an article URL.
-    Returns (image_url, source_type) or (None, None).
+def find_image_for_post(post_content, source_urls_json=None, image_config=None,
+                        exclude_urls=None, chart_hint=None, chart_data_json=None):
+    """Generate a chart image for a tweet.
+
+    Args:
+        post_content: The tweet text (used to extract asset info if no hint)
+        source_urls_json: Not used for charts (kept for API compat)
+        image_config: Image config from DB
+        exclude_urls: Not used for charts (kept for API compat)
+        chart_hint: Parsed CHART_DATA hint from LLM (e.g., "line, Bitcoin, 7d")
+        chart_data_json: Pre-built chart data dict
+
+    Returns:
+        (image_path, source_type) or (None, None)
     """
-    try:
-        resp = requests.get(article_url, headers=HEADERS, timeout=8, allow_redirects=True)
-        resp.raise_for_status()
-    except Exception:
-        return None, None
+    chart_cfg = get_chart_config()
 
-    try:
-        soup = BeautifulSoup(resp.text[:50000], "html.parser")  # Limit parsing to first 50KB
-    except Exception:
-        return None, None
+    # Try to build chart from hint
+    chart_type, asset_name, timeframe = _parse_chart_hint(chart_hint)
 
-    # Try og:image first
-    og = soup.find("meta", property="og:image")
-    if og and og.get("content"):
-        url = og["content"].strip()
-        if url and _is_valid_image_url(url):
-            return _make_absolute(url, article_url), "article_og"
+    if not chart_type:
+        chart_type = "line"  # Default
 
-    # Try twitter:image
-    tw = soup.find("meta", attrs={"name": "twitter:image"})
-    if tw and tw.get("content"):
-        url = tw["content"].strip()
-        if url and _is_valid_image_url(url):
-            return _make_absolute(url, article_url), "article_twitter"
+    # Try to get historical data for the chart
+    chart_data = None
 
-    return None, None
-
-
-def extract_keywords(tweet_text):
-    """Extract 2-3 search keywords from tweet content."""
-    # Remove emojis and special chars
-    clean = re.sub(r"[^\w\s]", " ", tweet_text)
-    clean = re.sub(r"\s+", " ", clean).strip()
-
-    words = clean.lower().split()
-    # Filter: remove stopwords, short words, numbers
-    keywords = [w for w in words if len(w) >= 4 and w not in STOPWORDS and not w.isdigit()]
-
-    # Take top 3 longest (usually the most specific)
-    keywords.sort(key=len, reverse=True)
-    return keywords[:3]
-
-
-def search_unsplash(keywords, api_key):
-    """Search Unsplash for a landscape image. Returns URL or None."""
-    if not api_key:
-        return None
-    query = " ".join(keywords)
-    try:
-        resp = requests.get(
-            "https://api.unsplash.com/search/photos",
-            params={"query": query, "per_page": 3, "orientation": "landscape"},
-            headers={"Authorization": f"Client-ID {api_key}"},
-            timeout=8,
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-        if results:
-            return results[0]["urls"]["regular"]
-    except Exception:
-        pass
-    return None
-
-
-def search_pexels(keywords, api_key):
-    """Search Pexels for a landscape image. Returns URL or None."""
-    if not api_key:
-        return None
-    query = " ".join(keywords)
-    try:
-        resp = requests.get(
-            "https://api.pexels.com/v1/search",
-            params={"query": query, "per_page": 3, "orientation": "landscape"},
-            headers={"Authorization": api_key},
-            timeout=8,
-        )
-        resp.raise_for_status()
-        photos = resp.json().get("photos", [])
-        if photos:
-            return photos[0]["src"]["large"]
-    except Exception:
-        pass
-    return None
-
-
-def find_image_for_post(post_content, source_urls_json, image_config=None, exclude_urls=None):
-    """Find the best image for a tweet, avoiding already-used images.
-
-    Strategy order depends on whether an image_hint was provided:
-    - With image_hint: stock photo search first (keywords are targeted), then article og:image
-    - Without image_hint: article og:image first, then stock photo search
-
-    Returns (image_url, source_type) or (None, None).
-    """
-    if exclude_urls is None:
-        exclude_urls = set()
-
-    source_urls = []
-    if source_urls_json:
+    if chart_data_json:
         try:
-            source_urls = json.loads(source_urls_json) if isinstance(source_urls_json, str) else source_urls_json
+            chart_data = json.loads(chart_data_json) if isinstance(chart_data_json, str) else chart_data_json
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Determine available stock photo APIs
-    unsplash_key = ""
-    pexels_key = ""
-    if image_config:
-        unsplash_key = image_config.get("unsplash_api_key", "") or getattr(config, "UNSPLASH_ACCESS_KEY", "")
-        pexels_key = image_config.get("pexels_api_key", "") or getattr(config, "PEXELS_API_KEY", "")
-    has_stock_api = bool(unsplash_key or pexels_key)
+    if not chart_data and asset_name:
+        chart_data = _build_chart_data_from_db(chart_type, asset_name, timeframe)
 
-    keywords = extract_keywords(post_content)
+    if not chart_data:
+        # Try to extract asset from tweet content
+        asset_name = _extract_asset_from_text(post_content)
+        if asset_name:
+            chart_data = _build_chart_data_from_db(chart_type, asset_name, "7d")
 
-    # If stock photo APIs are available, try keyword search first (more targeted than og:image)
-    if has_stock_api and keywords:
-        img_url = search_unsplash(keywords, unsplash_key)
-        if img_url and img_url not in exclude_urls:
-            return img_url, "unsplash"
+    if not chart_data:
+        logger.info("No chart data available for this tweet")
+        return None, None
 
-        img_url = search_pexels(keywords, pexels_key)
-        if img_url and img_url not in exclude_urls:
-            return img_url, "pexels"
+    # Generate the chart
+    title = _build_chart_title(asset_name, chart_type)
+    output_path = _get_chart_path()
 
-    # Fallback: Extract from source articles
-    for url in source_urls[:5]:
-        if url:
-            img_url, source_type = extract_article_image(url)
-            if img_url and img_url not in exclude_urls:
-                return img_url, source_type
-
-    # Last resort: stock photo with broader keywords (if not tried above)
-    if not has_stock_api and keywords:
-        # No stock API keys — can't do keyword search
-        pass
+    result = generate_chart(chart_type, chart_data, title, output_path, chart_cfg)
+    if result:
+        return result, "chart"
 
     return None, None
 
 
-def download_image(image_url, post_id="0"):
-    """Download image to local data/images/ directory. Returns local path or None."""
-    image_dir = getattr(config, "IMAGE_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "images"))
-    os.makedirs(image_dir, exist_ok=True)
+def _parse_chart_hint(hint):
+    """Parse a CHART_DATA hint string like 'line, Bitcoin, 7d'."""
+    if not hint:
+        return None, None, None
 
-    try:
-        resp = requests.get(image_url, headers=HEADERS, timeout=15, stream=True)
-        resp.raise_for_status()
+    parts = [p.strip() for p in hint.split(",")]
+    chart_type = parts[0].lower() if len(parts) > 0 else "line"
+    asset_name = parts[1] if len(parts) > 1 else None
+    timeframe = parts[2] if len(parts) > 2 else "7d"
 
-        content_type = resp.headers.get("Content-Type", "")
-        if "jpeg" in content_type or "jpg" in content_type:
-            ext = "jpg"
-        elif "png" in content_type:
-            ext = "png"
-        elif "webp" in content_type:
-            ext = "webp"
-        elif "gif" in content_type:
-            ext = "gif"
-        else:
-            # Guess from URL
-            url_lower = image_url.lower()
-            if ".png" in url_lower:
-                ext = "png"
-            elif ".webp" in url_lower:
-                ext = "webp"
-            else:
-                ext = "jpg"
+    # Normalize chart type
+    valid_types = {"line", "bar", "odds", "pie", "comparison"}
+    if chart_type not in valid_types:
+        chart_type = "line"
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        url_hash = hashlib.md5(image_url.encode()).hexdigest()[:8]
-        filename = f"{post_id}_{timestamp}_{url_hash}.{ext}"
-        filepath = os.path.join(image_dir, filename)
+    return chart_type, asset_name, timeframe
 
-        # Download with size limit (5MB)
-        size = 0
-        with open(filepath, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                size += len(chunk)
-                if size > 5 * 1024 * 1024:
-                    f.close()
-                    os.remove(filepath)
-                    return None
-                f.write(chunk)
 
-        return filepath
+def _build_chart_data_from_db(chart_type, asset_name, timeframe):
+    """Build chart data dict from market_data history."""
+    days = _timeframe_to_days(timeframe)
 
-    except Exception:
+    # Try to find the asset in market_data with flexible matching
+    history = _find_market_history(asset_name, days)
+
+    if not history or len(history) < 2:
         return None
 
+    source = history[0].get("source", "")
+    values = [row["value"] for row in history]
+    labels = [row["fetched_at"][:16] if row.get("fetched_at") else "" for row in history]
 
-def _is_valid_image_url(url):
-    """Check if URL looks like an image."""
-    if not url or len(url) < 10:
-        return False
-    # Reject data URIs and SVGs
-    if url.startswith("data:") or url.endswith(".svg"):
-        return False
-    return True
+    if chart_type == "odds":
+        return {
+            "yes_values": values,
+            "no_values": [100 - v for v in values],
+            "labels": labels,
+        }
+    elif chart_type == "bar":
+        return {
+            "names": [asset_name],
+            "values": [history[-1].get("change_pct", 0) or 0],
+            "is_percent": True,
+            "xlabel": "Change %",
+        }
+    else:
+        return {
+            "values": values,
+            "labels": labels,
+            "label": "Price ($)" if source != "polymarket" else "Odds (%)",
+        }
 
 
-def _make_absolute(url, base_url):
-    """Convert relative URL to absolute."""
-    if url.startswith("http"):
-        return url
-    if url.startswith("//"):
-        return "https:" + url
-    from urllib.parse import urljoin
-    return urljoin(base_url, url)
+def _find_market_history(asset_name, days):
+    """Search market_data with flexible matching: by asset_id, asset_name, or partial match."""
+    from storage.database import get_connection
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    search_term = asset_name.lower().strip()
+    since = f"-{days} days"
+
+    # 1. Exact asset_id match
+    cursor.execute(
+        """SELECT * FROM market_data WHERE LOWER(asset_id) = ?
+           AND fetched_at >= datetime('now', ?) ORDER BY fetched_at ASC""",
+        (search_term, since),
+    )
+    rows = cursor.fetchall()
+    if rows and len(rows) >= 2:
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # 2. Partial asset_name match (e.g., "CC" matches "Canton (CC)")
+    cursor.execute(
+        """SELECT * FROM market_data WHERE LOWER(asset_name) LIKE ?
+           AND fetched_at >= datetime('now', ?) ORDER BY fetched_at ASC""",
+        (f"%{search_term}%", since),
+    )
+    rows = cursor.fetchall()
+    if rows and len(rows) >= 2:
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # 3. Ticker symbol match in asset_name (e.g., "$BTC" -> "(BTC)")
+    cursor.execute(
+        """SELECT * FROM market_data WHERE LOWER(asset_name) LIKE ?
+           AND fetched_at >= datetime('now', ?) ORDER BY fetched_at ASC""",
+        (f"%({search_term.upper()})%", since),
+    )
+    rows = cursor.fetchall()
+    if rows and len(rows) >= 2:
+        conn.close()
+        return [dict(r) for r in rows]
+
+    conn.close()
+    return None
+
+
+def _extract_asset_from_text(text):
+    """Try to extract an asset name/ticker from tweet text."""
+    import re
+
+    # Cashtags: $BTC, $ETH - return the ticker symbol directly (flexible matching handles the rest)
+    match = re.search(r"\$([A-Z]{2,5})\b", text)
+    if match:
+        return match.group(1)
+
+    # Index references
+    if "s&p 500" in text.lower() or "s&p500" in text.lower():
+        return "^GSPC"
+    if "nasdaq" in text.lower():
+        return "^IXIC"
+    if "dow jones" in text.lower() or "dow" in text.lower():
+        return "^DJI"
+    if "vix" in text.lower():
+        return "^VIX"
+
+    return None
+
+
+def _timeframe_to_days(timeframe):
+    """Convert timeframe string to days."""
+    if not timeframe:
+        return 7
+    timeframe = timeframe.lower().strip()
+    if "1h" in timeframe or "1 hour" in timeframe:
+        return 1
+    elif "24h" in timeframe or "1d" in timeframe:
+        return 1
+    elif "7d" in timeframe or "1w" in timeframe or "week" in timeframe:
+        return 7
+    elif "30d" in timeframe or "1m" in timeframe or "month" in timeframe:
+        return 30
+    return 7
+
+
+def _build_chart_title(asset_name, chart_type):
+    """Build a chart title from asset name and type."""
+    if not asset_name:
+        return "Market Data"
+    name = asset_name.replace("^", "").upper() if asset_name.startswith("^") else asset_name.title()
+    type_labels = {
+        "line": "Price History",
+        "bar": "Change",
+        "odds": "Odds History",
+        "pie": "Market Share",
+        "comparison": "Comparison",
+    }
+    return f"{name} - {type_labels.get(chart_type, 'Chart')}"
+
+
+def _get_chart_path():
+    """Generate a unique file path for a chart image."""
+    image_dir = getattr(config, "IMAGE_DIR",
+                        os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "images"))
+    os.makedirs(image_dir, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    return os.path.join(image_dir, f"chart_{timestamp}.png")
+
+
+def download_image(image_url, post_id="0"):
+    """Legacy compat: for chart images, the path is already local. Returns the path as-is."""
+    if image_url and os.path.exists(image_url):
+        return image_url
+    return None

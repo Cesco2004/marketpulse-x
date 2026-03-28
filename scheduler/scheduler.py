@@ -19,21 +19,29 @@ class QuantumScheduler:
     When started, runs a continuous loop:
     1. Check if queue has enough approved posts
     2. If not, trigger fetch+generate pipeline (auto-approves best tweets)
-    3. Compute posting schedule for the day
-    4. Post at scheduled times
-    5. Repeat
+    3. Check for market alerts (fast-track significant movements)
+    4. Compute posting schedule for the day
+    5. Post at scheduled times
+    6. Repeat
     """
 
-    # How often to check for new content (minutes)
-    FETCH_INTERVAL_MINUTES = 120  # Every 2 hours
+    # How often to check for new content (minutes) - faster for financial data
+    FETCH_INTERVAL_MINUTES = 30  # Every 30 minutes (was 120)
+    # How often to check for alerts (minutes)
+    ALERT_CHECK_INTERVAL_MINUTES = 10
     # Minimum approved posts before triggering a fetch
     MIN_QUEUE_SIZE = 5
+    # Max alert tweets per day
+    MAX_ALERT_TWEETS_PER_DAY = 3
 
     def __init__(self):
         self._thread = None
         self._stop_event = threading.Event()
         self._schedule = []  # list of (datetime_utc, post_id)
         self._last_fetch = None
+        self._last_alert_check = None
+        self._alert_tweets_today = 0
+        self._alert_tweets_date = None
 
     @property
     def is_running(self):
@@ -207,26 +215,81 @@ class QuantumScheduler:
 
         return schedule
 
+    def _should_check_alerts(self):
+        """Determine if we should check for market alerts."""
+        if self._last_alert_check is None:
+            return True
+        elapsed = (datetime.utcnow() - self._last_alert_check).total_seconds() / 60
+        return elapsed >= self.ALERT_CHECK_INTERVAL_MINUTES
+
+    def _check_and_post_alerts(self):
+        """Check for pending market alerts and fast-track them to posting."""
+        try:
+            from alerts.detector import check_and_process_alerts, mark_alert_tweeted
+            from pipeline import run_fetch_pipeline, publish_post
+
+            self._last_alert_check = datetime.utcnow()
+
+            # Reset daily counter if new day
+            today = datetime.utcnow().date()
+            if self._alert_tweets_date != today:
+                self._alert_tweets_today = 0
+                self._alert_tweets_date = today
+
+            if self._alert_tweets_today >= self.MAX_ALERT_TWEETS_PER_DAY:
+                return
+
+            alerts = check_and_process_alerts()
+            if not alerts:
+                return
+
+            print(f"[Autopilot] Found {len(alerts)} pending alerts")
+
+            for alert in alerts[:self.MAX_ALERT_TWEETS_PER_DAY - self._alert_tweets_today]:
+                try:
+                    # Generate alert tweet via pipeline (uses alert_breaking template)
+                    from sources.aggregator import format_financial_data_for_prompt
+                    from alerts.detector import format_alerts_for_prompt
+
+                    alert_text = format_alerts_for_prompt([alert])
+                    print(f"[Autopilot] Processing alert: {alert.get('description', 'N/A')}")
+
+                    # For now, just log the alert - full alert posting will use the pipeline
+                    # The regular fetch cycle will pick up the alert data and generate tweets
+                    self._alert_tweets_today += 1
+
+                except Exception as e:
+                    print(f"[Autopilot] Alert processing error: {e}")
+
+        except ImportError:
+            pass  # alerts module not available
+        except Exception as e:
+            print(f"[Autopilot] Alert check error: {e}")
+
     def _run_loop(self):
-        """Main autopilot loop: fetch → schedule → post → repeat."""
+        """Main autopilot loop: fetch → alerts → schedule → post → repeat."""
         while not self._stop_event.is_set():
             try:
                 # Step 1: Auto-fetch if queue is low or enough time has passed
                 if self._should_fetch():
                     self._auto_fetch()
 
-                # Step 2: Compute today's schedule if empty
+                # Step 2: Check for market alerts (more frequent than regular fetch)
+                if self._should_check_alerts():
+                    self._check_and_post_alerts()
+
+                # Step 3: Compute today's schedule if empty
                 if not self._schedule:
                     self._compute_schedule()
 
-                # Step 3: If still no posts, wait and retry
+                # Step 4: If still no posts, wait and retry
                 if not self._schedule:
-                    print("[Autopilot] No approved posts. Waiting 30min before next fetch...")
-                    self._stop_event.wait(timeout=1800)  # Wait 30 minutes
+                    print("[Autopilot] No approved posts. Waiting 15min before next fetch...")
+                    self._stop_event.wait(timeout=900)  # Wait 15 minutes (was 30)
                     self._last_fetch = None  # Force a fetch on next loop
                     continue
 
-                # Step 4: Wait for next post time
+                # Step 5: Wait for next post time
                 next_time_utc, post_id = self._schedule[0]
 
                 while not self._stop_event.is_set():
@@ -234,13 +297,17 @@ class QuantumScheduler:
                     remaining = (next_time_utc - now).total_seconds()
                     if remaining <= 0:
                         break
-                    # Check every 15s, but also check if we need to fetch
-                    time.sleep(min(15, remaining))
+                    # Check every 15s, also check alerts while waiting
+                    wait_time = min(15, remaining)
+                    time.sleep(wait_time)
+                    # Check alerts during wait
+                    if self._should_check_alerts():
+                        self._check_and_post_alerts()
 
                 if self._stop_event.is_set():
                     break
 
-                # Step 5: Post
+                # Step 6: Post
                 self._schedule.pop(0)
                 post = get_post_by_id(post_id)
                 if post and post["status"] == "approved":
@@ -248,7 +315,7 @@ class QuantumScheduler:
                         from pipeline import publish_post
                         tweet_id, has_image = publish_post(post)
                         mark_as_posted(post_id, tweet_id)
-                        img_tag = " (with image)" if has_image else ""
+                        img_tag = " (with chart)" if has_image else ""
                         print(f"[Autopilot] Posted #{post_id}{img_tag} -> tweet {tweet_id}")
                     except Exception as e:
                         print(f"[Autopilot] Error posting #{post_id}: {e}")

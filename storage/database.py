@@ -316,6 +316,59 @@ def init_db():
         )
     """)
 
+    # --- Market data snapshots (for delta computation and charting) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            asset_id TEXT NOT NULL,
+            asset_name TEXT NOT NULL,
+            metric_type TEXT NOT NULL,
+            value REAL NOT NULL,
+            previous_value REAL,
+            change_pct REAL,
+            change_abs REAL,
+            extra_data TEXT DEFAULT '{}',
+            fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_data_asset ON market_data(source, asset_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_data_fetched ON market_data(fetched_at)")
+
+    # --- Market alerts (significant movements that warrant alert tweets) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            asset_id TEXT NOT NULL,
+            asset_name TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            magnitude REAL NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'pending',
+            market_data_id INTEGER,
+            post_id INTEGER,
+            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_alerts_status ON market_alerts(status)")
+
+    # --- Chart config (singleton) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chart_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            theme TEXT DEFAULT 'dark',
+            watermark_text TEXT DEFAULT '@MarketPulseBot',
+            chart_width INTEGER DEFAULT 1200,
+            chart_height INTEGER DEFAULT 628,
+            color_up TEXT DEFAULT '#00C853',
+            color_down TEXT DEFAULT '#FF1744',
+            color_neutral TEXT DEFAULT '#2196F3',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # --- Monthly budget (singleton) ---
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS monthly_budget (
@@ -340,19 +393,15 @@ def init_db():
     cursor.execute("INSERT OR IGNORE INTO kill_switch (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO analytics_config (id) VALUES (1)")
     cursor.execute("INSERT OR IGNORE INTO monthly_budget (id) VALUES (1)")
+    cursor.execute("INSERT OR IGNORE INTO chart_config (id) VALUES (1)")
 
-    # Seed topic categories
+    # Seed topic categories (financial data sources)
     default_categories = [
-        ("academic_preprint", "Academic Pre-prints", "📚", "#818cf8", 1, 0.5, 0),
-        ("academic_journal", "Peer-Reviewed Journals", "🎓", "#34d399", 1, 0.5, 1),
-        ("industry_news", "Industry News", "📰", "#60a5fa", 1, 1.0, 2),
-        ("industry_report", "Industry Reports", "📊", "#fbbf24", 1, 0.8, 3),
-        ("tech_news", "Tech News", "💻", "#f472b6", 1, 1.0, 4),
-        ("company_blog", "Company Blogs", "🏢", "#fb923c", 1, 1.0, 5),
-        ("ai_ml", "AI & Machine Learning", "🤖", "#a78bfa", 1, 1.0, 6),
-        ("semiconductors", "Semiconductors", "⚡", "#fbbf24", 1, 0.8, 7),
-        ("robotics", "Robotics", "🦾", "#10b981", 1, 1.0, 8),
-        ("space_tech", "Space Tech", "🚀", "#38bdf8", 1, 0.8, 9),
+        ("polymarket", "Polymarket Odds", "📊", "#818cf8", 1, 1.0, 0),
+        ("crypto", "Crypto Markets", "₿", "#f7931a", 1, 1.0, 1),
+        ("sp500", "S&P 500 / Indices", "📈", "#00C853", 1, 1.0, 2),
+        ("macro", "Macro / Fed / Bonds", "🏛️", "#60a5fa", 1, 0.8, 3),
+        ("cross_market", "Cross-Market", "⚡", "#fbbf24", 1, 0.8, 4),
     ]
     for key, label, icon, color, enabled, weight, sort_order in default_categories:
         cursor.execute(
@@ -360,51 +409,19 @@ def init_db():
             (key, label, icon, color, enabled, weight, sort_order),
         )
 
-    # Seed RSS feeds
-    default_feeds = [
-        # Existing feeds (deprioritized academic)
-        ("ArXiv Quantum Physics", "https://rss.arxiv.org/rss/quant-ph", 1, "academic_preprint", "Pre-print server for quantum physics papers", "https://arxiv.org/list/quant-ph/recent", 1, 0.5),
-        ("IEEE Spectrum Quantum", "https://spectrum.ieee.org/feeds/topic/computing.rss", 2, "industry_news", "Engineering and technology news magazine", "https://spectrum.ieee.org/topic/computing", 1, 0.8),
-        ("Nature Quantum Information", "https://www.nature.com/natquantuminf.rss", 1, "academic_journal", "Peer-reviewed quantum information research", "https://www.nature.com/npjqi/", 1, 0.5),
-        ("Quantum Computing Report", "https://quantumcomputingreport.com/feed/", 2, "industry_report", "Industry analysis and news aggregator", "https://quantumcomputingreport.com", 1, 0.8),
-        # Quantum - accessible
-        ("The Quantum Insider", "https://thequantuminsider.com/feed/", 1, "industry_news", "Quantum industry news and analysis", "https://thequantuminsider.com", 1, 1.0),
-        ("TechCrunch Quantum", "https://techcrunch.com/tag/quantum-computing/feed/", 1, "tech_news", "Quantum computing coverage from TechCrunch", "https://techcrunch.com/tag/quantum-computing/", 1, 1.0),
-        # Tech news
-        ("Wired Science", "https://www.wired.com/feed/category/science/latest/rss", 2, "tech_news", "Science and technology news", "https://www.wired.com/category/science/", 1, 1.0),
-        ("Ars Technica Science", "https://feeds.arstechnica.com/arstechnica/science", 2, "tech_news", "Science and tech reporting", "https://arstechnica.com/science/", 1, 1.0),
-        # Company blogs
-        ("Google AI Blog", "https://blog.google/technology/ai/rss/", 1, "company_blog", "Google AI announcements and research", "https://blog.google/technology/ai/", 1, 1.0),
-        ("IBM Research Blog", "https://research.ibm.com/blog/rss", 1, "company_blog", "IBM research and quantum updates", "https://research.ibm.com/blog", 1, 1.0),
-        ("Microsoft Quantum Blog", "https://cloudblogs.microsoft.com/quantum/feed/", 1, "company_blog", "Microsoft quantum computing updates", "https://cloudblogs.microsoft.com/quantum/", 1, 1.0),
-        ("AWS Quantum Computing", "https://aws.amazon.com/blogs/quantum-computing/feed/", 2, "company_blog", "AWS quantum computing blog", "https://aws.amazon.com/blogs/quantum-computing/", 1, 1.0),
-        # AI/ML
-        ("MIT Technology Review", "https://www.technologyreview.com/feed/", 1, "ai_ml", "Emerging technology analysis", "https://www.technologyreview.com", 1, 1.0),
-        ("The Verge AI", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", 2, "ai_ml", "AI news and analysis", "https://www.theverge.com/ai-artificial-intelligence", 1, 1.0),
-        ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/", 2, "ai_ml", "Enterprise AI news", "https://venturebeat.com/category/ai/", 1, 1.0),
-        # Semiconductors
-        ("Tom's Hardware", "https://www.tomshardware.com/feeds/all", 2, "semiconductors", "Hardware and chip news", "https://www.tomshardware.com", 1, 0.8),
-        # Robotics
-        ("The Robot Report", "https://www.therobotreport.com/feed/", 1, "robotics", "Robotics industry news", "https://www.therobotreport.com", 1, 1.0),
-        ("TechCrunch Robotics", "https://techcrunch.com/tag/robotics/feed/", 2, "robotics", "Robotics coverage from TechCrunch", "https://techcrunch.com/tag/robotics/", 1, 1.0),
-        # Space tech
-        ("SpaceNews", "https://spacenews.com/feed/", 2, "space_tech", "Space industry news", "https://spacenews.com", 1, 0.8),
-        ("Ars Technica Space", "https://feeds.arstechnica.com/arstechnica/space", 2, "space_tech", "Space science and tech", "https://arstechnica.com/space/", 1, 0.8),
-    ]
-    for name, url, priority, category, description, website, enabled, weight in default_feeds:
-        cursor.execute(
-            "INSERT OR IGNORE INTO rss_feeds (name, url, priority, category, description, website, is_enabled, topic_weight) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (name, url, priority, category, description, website, enabled, weight),
-        )
+    # RSS feeds table kept for schema compat but no longer seeded (financial data comes from APIs)
 
-    # Seed default content sources (Reddit subreddits, HN config)
+    # Seed default content sources (financial data APIs)
     default_content_sources = [
-        ("reddit", "r/technology", "technology"),
-        ("reddit", "r/artificial", "artificial"),
-        ("reddit", "r/Futurology", "Futurology"),
-        ("reddit", "r/singularity", "singularity"),
-        ("reddit", "r/startups", "startups"),
-        ("hackernews", "HackerNews Top Stories", "top"),
+        ("polymarket", "Polymarket Markets", "gamma_api"),
+        ("coingecko", "CoinGecko Top Coins", "markets"),
+        ("coingecko", "CoinGecko Global", "global"),
+        ("coingecko", "CoinGecko Trending", "trending"),
+        ("yahoo_finance", "S&P 500", "^GSPC"),
+        ("yahoo_finance", "NASDAQ", "^IXIC"),
+        ("yahoo_finance", "Dow Jones", "^DJI"),
+        ("yahoo_finance", "VIX", "^VIX"),
+        ("yahoo_finance", "10Y Treasury", "^TNX"),
     ]
     for source_type, name, config_value in default_content_sources:
         cursor.execute(
@@ -443,6 +460,17 @@ def init_db():
         ("quality_config", "weight_substance", "REAL DEFAULT 0.25"),
         ("quality_config", "weight_variety", "REAL DEFAULT 0.20"),
         ("quality_config", "weight_vibes", "REAL DEFAULT 0.20"),
+        # New: financial data columns
+        ("articles", "asset_id", "TEXT"),
+        ("articles", "asset_type", "TEXT"),
+        ("articles", "change_pct", "REAL"),
+        ("articles", "alert_level", "TEXT DEFAULT 'normal'"),
+        ("posts", "alert_id", "INTEGER"),
+        ("posts", "chart_type", "TEXT"),
+        ("posts", "chart_data_json", "TEXT"),
+        # New: scoring weights for financial pivot
+        ("quality_config", "weight_tone", "REAL DEFAULT 0.20"),
+        ("quality_config", "weight_data_accuracy", "REAL DEFAULT 0.20"),
     ]
     for table, column, col_type in migrations:
         if not _column_exists(cursor, table, column):
@@ -1953,4 +1981,210 @@ def delete_content_source(source_id):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM content_sources WHERE id = ?", (source_id,))
     conn.commit()
+    conn.close()
+
+
+# --- Market Data ---
+
+def save_market_data(source, asset_id, asset_name, metric_type, value, extra_data=None):
+    """Save a market data snapshot. Auto-computes delta from previous value."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Get previous value for delta computation
+    cursor.execute(
+        "SELECT value FROM market_data WHERE source = ? AND asset_id = ? AND metric_type = ? ORDER BY fetched_at DESC LIMIT 1",
+        (source, asset_id, metric_type),
+    )
+    prev_row = cursor.fetchone()
+    previous_value = prev_row["value"] if prev_row else None
+    change_pct = None
+    change_abs = None
+    if previous_value is not None and previous_value != 0:
+        change_abs = value - previous_value
+        change_pct = (change_abs / abs(previous_value)) * 100
+
+    cursor.execute(
+        """INSERT INTO market_data (source, asset_id, asset_name, metric_type, value,
+           previous_value, change_pct, change_abs, extra_data)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (source, asset_id, asset_name, metric_type, value,
+         previous_value, change_pct, change_abs, json.dumps(extra_data or {})),
+    )
+    data_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return data_id, change_pct
+
+
+def get_latest_market_data(source=None, asset_id=None, metric_type=None, limit=50):
+    """Get the most recent market data snapshots."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM market_data WHERE 1=1"
+    params = []
+    if source:
+        query += " AND source = ?"
+        params.append(source)
+    if asset_id:
+        query += " AND asset_id = ?"
+        params.append(asset_id)
+    if metric_type:
+        query += " AND metric_type = ?"
+        params.append(metric_type)
+    query += " ORDER BY fetched_at DESC LIMIT ?"
+    params.append(limit)
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_market_data_history(source, asset_id, metric_type="price", days=7):
+    """Get historical market data for charting."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT * FROM market_data
+           WHERE source = ? AND asset_id = ? AND metric_type = ?
+           AND fetched_at >= datetime('now', ?)
+           ORDER BY fetched_at ASC""",
+        (source, asset_id, metric_type, f"-{days} days"),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_top_movers(source=None, limit=10):
+    """Get assets with the biggest recent changes (by absolute change_pct)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT m1.* FROM market_data m1
+        INNER JOIN (
+            SELECT source, asset_id, metric_type, MAX(fetched_at) as max_fetched
+            FROM market_data
+            WHERE change_pct IS NOT NULL
+    """
+    params = []
+    if source:
+        query += " AND source = ?"
+        params.append(source)
+    query += """
+            GROUP BY source, asset_id, metric_type
+        ) m2 ON m1.source = m2.source AND m1.asset_id = m2.asset_id
+             AND m1.metric_type = m2.metric_type AND m1.fetched_at = m2.max_fetched
+        ORDER BY ABS(m1.change_pct) DESC LIMIT ?
+    """
+    params.append(limit)
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- Market Alerts ---
+
+def create_market_alert(source, asset_id, asset_name, alert_type, magnitude,
+                        description=None, market_data_id=None, expires_hours=1):
+    """Create a new market alert."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO market_alerts (source, asset_id, asset_name, alert_type, magnitude,
+           description, market_data_id, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?))""",
+        (source, asset_id, asset_name, alert_type, magnitude,
+         description, market_data_id, f"+{expires_hours} hours"),
+    )
+    alert_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return alert_id
+
+
+def get_pending_alerts():
+    """Get pending alerts that haven't expired."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT * FROM market_alerts
+           WHERE status = 'pending' AND (expires_at IS NULL OR expires_at > datetime('now'))
+           ORDER BY magnitude DESC""",
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_alert_status(alert_id, status, post_id=None):
+    """Update alert status: 'pending', 'tweeted', 'expired', 'dismissed'."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if post_id:
+        cursor.execute("UPDATE market_alerts SET status = ?, post_id = ? WHERE id = ?",
+                        (status, post_id, alert_id))
+    else:
+        cursor.execute("UPDATE market_alerts SET status = ? WHERE id = ?", (status, alert_id))
+    conn.commit()
+    conn.close()
+
+
+def expire_old_alerts():
+    """Mark expired alerts."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE market_alerts SET status = 'expired' WHERE status = 'pending' AND expires_at <= datetime('now')"
+    )
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
+def get_alert_stats():
+    """Get alert counts by status."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT status, COUNT(*) as count FROM market_alerts GROUP BY status")
+    stats = {row["status"]: row["count"] for row in cursor.fetchall()}
+    conn.close()
+    return stats
+
+
+# --- Chart Config ---
+
+def get_chart_config():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM chart_config WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {
+        "theme": "dark", "watermark_text": "@MarketPulseBot",
+        "chart_width": 1200, "chart_height": 628,
+        "color_up": "#00C853", "color_down": "#FF1744", "color_neutral": "#2196F3",
+    }
+
+
+def update_chart_config(**kwargs):
+    conn = get_connection()
+    cursor = conn.cursor()
+    allowed = ["theme", "watermark_text", "chart_width", "chart_height",
+               "color_up", "color_down", "color_neutral"]
+    sets = []
+    values = []
+    for key, val in kwargs.items():
+        if key in allowed:
+            sets.append(f"{key} = ?")
+            values.append(val)
+    if sets:
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE chart_config SET {', '.join(sets)} WHERE id = 1"
+        cursor.execute(query, values)
+        conn.commit()
     conn.close()

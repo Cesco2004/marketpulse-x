@@ -117,18 +117,27 @@ def generate_posts(articles_text, template_prompt=None, template_meta=None):
 
 
 def _extract_image_hint(text):
-    """Extract all IMAGE_HINT lines from text and return (cleaned_text, first_hint)."""
-    hints = re.findall(r"IMAGE_HINT:\s*(.+?)(?:\n|$)", text, re.IGNORECASE)
-    cleaned = re.sub(r"\n?IMAGE_HINT:\s*.+?(?:\n|$)", "\n", text, flags=re.IGNORECASE).strip()
+    """Extract IMAGE_HINT and CHART_DATA lines from text. Return (cleaned_text, first_hint)."""
+    # Extract both IMAGE_HINT and CHART_DATA
+    hints = re.findall(r"(?:IMAGE_HINT|CHART_DATA):\s*(.+?)(?:\n|$)", text, re.IGNORECASE)
+    cleaned = re.sub(r"\n?(?:IMAGE_HINT|CHART_DATA):\s*.+?(?:\n|$)", "\n", text, flags=re.IGNORECASE).strip()
     hint = hints[0].strip().strip("[]") if hints else None
     return cleaned, hint
 
 
 def _clean_post_content(content):
     """Clean raw LLM output into tweet content."""
-    content = content.strip().strip('"').strip("*").strip()
+    content = content.strip().strip('"').strip()
+    # Remove all markdown bold/italic artifacts: **text**, *text*, __text__
+    content = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", content)
+    content = re.sub(r"_{1,2}([^_]+)_{1,2}", r"\1", content)
+    # Clean tag artifacts like "DATA:**" -> "DATA:"
+    content = re.sub(r"(BREAKING|JUST IN|MARKET UPDATE|ALERT|DATA)\s*:\s*\*+", r"\1:", content, flags=re.IGNORECASE)
     content = re.sub(r"\s*[\(\[]\d+\s*char(?:acter)?s?[\)\]]\s*$", "", content).strip()
+    # Remove trailing --- separators
     content = re.sub(r"\n?-{2,}\s*$", "", content).strip()
+    # Remove leading --- separators
+    content = re.sub(r"^-{2,}\s*\n?", "", content).strip()
     return content
 
 
@@ -264,11 +273,14 @@ def parse_posts(raw_text, template_meta=None):
             post_type = post_types[i] if i < len(post_types) else "other"
             posts.append({"content": content, "type": post_type, "image_hint": hint})
 
-    # If still one giant blob, force-split any post over 300 chars
-    if len(posts) == 1 and len(posts[0]["content"]) > 300:
+    # If still one giant blob, force-split any post over 280 chars
+    if len(posts) == 1 and len(posts[0]["content"]) > 280:
         blob = posts[0]["content"]
-        # Try splitting on double newlines
-        parts = [p.strip() for p in re.split(r"\n\s*\n", blob) if p.strip()]
+        # Try splitting on --- separators first (common LLM pattern)
+        parts = [p.strip() for p in re.split(r"\n\s*-{3,}\s*\n", blob) if p.strip()]
+        # Fallback: split on double newlines
+        if len(parts) < 2:
+            parts = [p.strip() for p in re.split(r"\n\s*\n", blob) if p.strip()]
         if len(parts) >= 2:
             posts = []
             for i, part in enumerate(parts):

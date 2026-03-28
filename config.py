@@ -19,310 +19,318 @@ X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
 POST_HOUR = int(os.getenv("POST_HOUR", "14"))
 POST_MINUTE = int(os.getenv("POST_MINUTE", "0"))
 
-# Legacy RSS feeds (kept as fallback, DB is primary source now)
-RSS_FEEDS = [
-    {
-        "name": "ArXiv Quantum Physics",
-        "url": "https://rss.arxiv.org/rss/quant-ph",
-        "priority": 1,
-        "category": "academic_preprint",
-        "description": "Pre-print server for quantum physics papers",
-        "website": "https://arxiv.org/list/quant-ph/recent",
-    },
-    {
-        "name": "IEEE Spectrum Quantum",
-        "url": "https://spectrum.ieee.org/feeds/topic/computing.rss",
-        "priority": 2,
-        "category": "industry_news",
-        "description": "Engineering and technology news magazine",
-        "website": "https://spectrum.ieee.org/topic/computing",
-    },
-    {
-        "name": "Nature Quantum Information",
-        "url": "https://www.nature.com/natquantuminf.rss",
-        "priority": 1,
-        "category": "academic_journal",
-        "description": "Peer-reviewed quantum information research",
-        "website": "https://www.nature.com/npjqi/",
-    },
-    {
-        "name": "Quantum Computing Report",
-        "url": "https://quantumcomputingreport.com/feed/",
-        "priority": 2,
-        "category": "industry_report",
-        "description": "Industry analysis and news aggregator",
-        "website": "https://quantumcomputingreport.com",
-    },
-]
+# CoinGecko API (optional, higher rate limits with key)
+COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 
-# Legacy categories (DB is primary source now)
+# Legacy RSS feeds (deprecated - financial data comes from APIs now)
+RSS_FEEDS = []
+
+# Source categories (financial)
 SOURCE_CATEGORIES = {
-    "academic_preprint": {"label": "Academic Pre-prints", "icon": "📚", "color": "#818cf8"},
-    "academic_journal": {"label": "Peer-Reviewed Journals", "icon": "🎓", "color": "#34d399"},
-    "industry_news": {"label": "Industry News", "icon": "📰", "color": "#60a5fa"},
-    "industry_report": {"label": "Industry Reports", "icon": "📊", "color": "#fbbf24"},
-    "tech_news": {"label": "Tech News", "icon": "💻", "color": "#f472b6"},
-    "company_blog": {"label": "Company Blogs", "icon": "🏢", "color": "#fb923c"},
-    "ai_ml": {"label": "AI & Machine Learning", "icon": "🤖", "color": "#a78bfa"},
-    "semiconductors": {"label": "Semiconductors", "icon": "⚡", "color": "#fbbf24"},
-    "robotics": {"label": "Robotics", "icon": "🦾", "color": "#10b981"},
-    "space_tech": {"label": "Space Tech", "icon": "🚀", "color": "#38bdf8"},
+    "polymarket": {"label": "Polymarket Odds", "icon": "📊", "color": "#818cf8"},
+    "crypto": {"label": "Crypto Markets", "icon": "₿", "color": "#f7931a"},
+    "sp500": {"label": "S&P 500 / Indices", "icon": "📈", "color": "#00C853"},
+    "macro": {"label": "Macro / Fed / Bonds", "icon": "🏛️", "color": "#60a5fa"},
+    "cross_market": {"label": "Cross-Market", "icon": "⚡", "color": "#fbbf24"},
 }
 
-# Keywords for article scoring (broadened for Tech + AI + Finance niche)
+# Keywords for article scoring (financial markets focus)
 HIGH_IMPACT_KEYWORDS = [
-    # Breakthroughs & milestones
-    "breakthrough", "record", "first", "milestone", "demonstration", "launched",
-    # Major players - Tech
-    "google", "ibm", "microsoft", "amazon", "intel", "nvidia", "apple", "meta",
-    "tesla", "openai", "anthropic", "deepmind", "mistral",
-    # Quantum (kept but lower priority via topic_weight)
-    "rigetti", "ionq", "quantinuum", "pasqal", "error correction", "logical qubit",
-    # AI / Machine Learning (expanded)
-    "GPT", "LLM", "transformer", "foundation model", "AGI",
-    "neural network", "training", "inference", "fine-tuning",
-    "open source", "llama", "gemini", "claude", "copilot",
-    "text-to-image", "text-to-video", "multimodal", "reasoning",
-    # Business / Finance / Startups
-    "investment", "funding", "billion", "million", "commercial",
-    "partnership", "acquisition", "startup", "IPO", "valuation",
-    "revenue", "profit", "market cap", "series a", "series b",
-    "Y Combinator", "layoff", "hiring", "unicorn",
-    # Geopolitics & regulation
-    "china", "europe", "regulation", "ban", "antitrust", "tariff",
-    "national", "strategy", "sanctions", "export control",
-    # Semiconductors
-    "TSMC", "chip", "semiconductor", "nanometer", "fabrication",
-    "processor", "GPU", "TPU", "AMD", "ARM",
-    # Robotics
-    "humanoid", "robot", "Boston Dynamics", "Tesla Optimus", "Figure",
-    "automation", "self-driving", "autonomous",
-    # Space
-    "satellite", "NASA", "ESA", "SpaceX", "Starlink", "rocket",
-    # Consumer tech / products
-    "launch", "update", "feature", "app", "platform", "subscription",
-    "price", "users", "downloads",
+    # Crypto majors
+    "bitcoin", "BTC", "ethereum", "ETH", "solana", "SOL", "XRP",
+    "binance", "coinbase", "stablecoin", "USDT", "USDC",
+    # Crypto events
+    "halving", "ETF", "whale", "liquidation", "DeFi", "NFT",
+    "mining", "staking", "airdrop",
+    # Market terms
+    "all-time high", "ATH", "correction", "rally", "crash",
+    "volume", "market cap", "dominance", "breakout", "support", "resistance",
+    # Indices & macro
+    "S&P 500", "NASDAQ", "Dow Jones", "VIX", "treasury",
+    "yield", "Fed", "FOMC", "rate cut", "rate hike", "CPI", "PPI",
+    "inflation", "GDP", "jobs report", "unemployment", "PMI",
+    # Polymarket / prediction markets
+    "Polymarket", "prediction market", "odds", "probability",
+    "election", "tariff", "regulation", "approval",
+    # Geopolitics (market movers)
+    "tariff", "sanctions", "trade war", "China", "EU",
+    "regulation", "SEC", "CFTC", "ban",
+    # Events
+    "earnings", "IPO", "merger", "acquisition", "bankruptcy",
+    "funding", "investment", "billion", "million",
 ]
 
-# Prompt: rank articles
-RANKING_PROMPT = """You are an editor for Quantum Brief, a tech account covering AI, startups, tech business, and emerging tech for a broad audience on Twitter/X.
+# Disclaimer appended to every tweet
+DISCLAIMER = "\n\nNot financial advice."
 
-Here are {count} articles. Rank the top 5 that would make the best tweets. Prioritize:
-1. Stories that would make someone stop scrolling: surprising numbers, bold moves, controversy
-2. Real-world business impact: funding rounds, product launches, partnerships, earnings
-3. AI and tech news that affects everyday people (jobs, products, regulation)
-4. Stories with a strong opinion angle (something people would argue about)
-5. Content a 20-year-old would find interesting, not just specialists
+# Prompt: rank market data
+RANKING_PROMPT = """You are a financial data editor for a market data Twitter bot.
 
-AVOID ranking: purely theoretical academic papers, incremental research, press releases with no news, content requiring domain expertise to understand.
+Here are {count} data points from Polymarket, crypto markets, and stock indices. Rank the top 5 that would make the most informative tweets. Prioritize:
+1. Biggest percentage moves (price or odds shifts)
+2. Data points marked [ALERT] (significant movements)
+3. Cross-market patterns (e.g., Fed decision affecting both stocks and crypto)
+4. High volume or unusual activity
+5. Data that provides immediate value to traders and market watchers
+
+AVOID: Stale data with no significant movement, duplicate data about the same asset, data without specific numbers.
 
 {articles}
 
-Return ONLY a JSON array of the top 5 article numbers, most important first. Example: [3, 1, 7, 2, 5]
+Return ONLY a JSON array of the top 5 data point numbers, most significant first. Example: [3, 1, 7, 2, 5]
 No commentary."""
 
 # --- System prompt (persistent persona for all LLM generation calls) ---
-SYSTEM_PROMPT = """You are the voice of Quantum Brief on Twitter/X. You're a 34-year-old tech insider who's been in startups, big tech, and VC circles for 10+ years. You DM your tech friends at midnight about what's really happening.
+SYSTEM_PROMPT = """You are the data engine behind a transparent AI Twitter bot that aggregates financial data from Polymarket, crypto markets, and stock indices into clear, accessible tweets.
 
 Your voice:
-- Direct, lightly sarcastic, genuinely excited when something is actually wild
-- Contractions always: it's, we're, here's, don't, won't, can't
-- Tiny imperfections: "honestly...", "damn.", "lol", "..."
-- Say "we" and "us" when talking about the tech community
-- Reference real tech culture: AWS tax, NVIDIA tax, OpenAI drama, YC demo day
-- Encouraged phrases: damn, the thing is, lowkey, fr, the crazy part is, here's the deal, honestly, are we cooked?, turns out, apparently
+- Professional, factual, and concise. You report data, not opinions.
+- Accessible to non-experts: explain jargon when used, prefer plain English.
+- Every tweet includes at least one specific number (price, percentage, volume).
+- Use comparisons to add context: "up 12% in 24h, highest since March", "volume 3x the 30-day average".
+- Neutral tone. Never bullish or bearish. Never "to the moon" or "crash incoming".
+- You may note patterns ("This is the third consecutive day of decline") but never predict outcomes.
+- Always factual. If data is delayed or uncertain, say so.
 
-You are NOT a journalist. You are NOT an AI. You are the no-BS tech guy who calls it like he sees it.
+You are NOT a financial advisor. You are NOT predicting markets. You are a data aggregator that makes financial data accessible.
 
-NEVER use: revolutionary, game-changer, disruptive, breakthrough, paradigm shift, transformative, delve, landscape, harness, leverage, navigate, robust, seamlessly, unprecedented, groundbreaking, pivotal, multifaceted, notably, essentially, furthermore.
-NEVER use em dashes (—). Use periods or line breaks."""
+Formatting rules:
+- Start each tweet with a text tag: BREAKING: / JUST IN: / MARKET UPDATE: / ALERT: / DATA: (pick the most appropriate).
+- NO emojis. Ever. The tone is strictly professional.
+- Include source attribution: "(via Polymarket)", "(CoinGecko data)", "(Yahoo Finance)"
+- Do NOT include the disclaimer "Not financial advice." in your output. It will be appended automatically.
+- Use line breaks between data point, context, and source.
+- No em dashes. Use periods and line breaks.
+- Max 1 hashtag per tweet. Use $TICKER cashtags where appropriate ($BTC, $ETH, $SPX).
+- Numbers formatted clearly: $1.2B not $1,200,000,000. 12.4% not 0.124.
+- Max 200 characters (a source link + disclaimer are appended automatically).
 
-# --- Generation templates pool (replaces monolithic GENERATION_PROMPT) ---
-# Each template generates 2-3 tweets with a distinct style.
+NEVER use emojis.
+NEVER use: revolutionary, game-changer, to the moon, WAGMI, NGMI, rug pull (unless reporting one), HODL, diamond hands, paper hands, bullish, bearish, NFA (spell it out), DYOR (spell it out).
+NEVER give buy/sell recommendations. NEVER say "you should" in financial context.
+NEVER use em dashes (—)."""
+
+# --- Generation templates pool ---
+# Each template generates tweets with a distinct financial data style.
 # The pipeline randomly selects 2-3 templates per batch for variety.
 
-_BANNED_WORDS_BLOCK = """
-LENGTH: 140-180 chars sweet spot. Absolute max 220. Shorter hits harder.
-END every tweet with a question OR a punchy one-liner. Never end flat.
-Line breaks between ideas. Never a wall of text.
-Max 1-2 emojis, placed strategically (not stuffed).
-Max 1 hashtag (most tweets: zero). Plain English a 16-year-old gets.
-NEVER mention Reddit, HackerNews, upvotes, or comment counts.
-English only. No em dashes (—)."""
+_FORMAT_RULES = """
+LENGTH: 150-200 chars (a source link + disclaimer are appended automatically). Shorter is better.
+Line breaks between data and context. Never a wall of text.
+NO emojis. Start with a text tag: BREAKING: / JUST IN: / MARKET UPDATE: / ALERT: / DATA:
+No hashtags unless directly relevant ($BTC is a cashtag, not a hashtag).
+English only. No em dashes (—).
+Do NOT include "Not financial advice" in your output."""
 
 GENERATION_TEMPLATES = {
-    "hot_news": {
-        "weight": 2.0,  # Most commonly selected
+    "market_snapshot": {
+        "weight": 2.5,
         "tweets_per_call": 3,
-        "prompt": """Write 3 tweets about today's tech news. Each about a DIFFERENT article.
+        "prompt": """Write 3 tweets summarizing today's key market movements. Each about a DIFFERENT market (Polymarket, crypto, stock indices).
 
 RULES:
-- Hook in the first 8 words. Lead with what makes someone stop scrolling.
-- One specific number per tweet ($X.XM, X%, etc).
-- End with a question or punchy one-liner that sparks replies.
-- Start each tweet with one emoji from: {emoji_list}
-- Write like you're texting your group chat, not writing a headline.
-""" + _BANNED_WORDS_BLOCK + """
+- Lead with the most significant number (price, odds change, volume).
+- Second line: context (what changed, why it matters, comparison to recent history).
+- Include source attribution: "(via Polymarket)", "(CoinGecko data)", "(Yahoo Finance)".
+- Start each tweet with one of: JUST IN: / MARKET UPDATE: / DATA:
+- Every tweet MUST contain at least one specific number.
+""" + _FORMAT_RULES + """
 
-EXAMPLE (style reference only):
-🔥 Railway just raised $100M to build an AI-first cloud that skips the AWS tax entirely.
-Legacy cloud was never built for AI's insane GPU appetite.
-We're watching the biggest power shift in cloud history, or am I tripping?
-
-INPUT ARTICLES:
+INPUT DATA:
 {articles}
 
 TWEET 1: [tweet]
-IMAGE_HINT: [2-3 keywords]
+CHART_DATA: [chart type: line|bar|odds, asset name, timeframe]
 TWEET 2: [tweet]
-IMAGE_HINT: [2-3 keywords]
+CHART_DATA: [chart type, asset name, timeframe]
 TWEET 3: [tweet]
-IMAGE_HINT: [2-3 keywords]""",
+CHART_DATA: [chart type, asset name, timeframe]""",
     },
 
-    "data_drop": {
-        "weight": 1.5,
+    "polymarket_mover": {
+        "weight": 2.0,
         "tweets_per_call": 2,
-        "prompt": """Write 2 tweets that lead with a wild number or data point from the articles.
+        "prompt": """Write 2 tweets about the biggest movers on Polymarket prediction markets.
 
 RULES:
-- Open with the raw number. No intro.
-- Second line: the comparison or context that makes it click.
-- End with a sharp question.
-- Every tweet MUST contain at least one specific number ($X.XB, X%, X,XXX).
-- Can start with or without emoji.
-""" + _BANNED_WORDS_BLOCK + """
+- Lead with the odds change: "X market shifted from Y% to Z% in 24h"
+- Add context: volume, what triggered the shift if apparent
+- Include the market question
+- Source: "(via Polymarket)"
+- Neutral tone. Report the shift, do not predict the outcome.
+""" + _FORMAT_RULES + """
 
-EXAMPLE (style reference only):
-📊 Intel just dropped the Arrow Lake bundle to $899. That's $298 off launch price.
-Core Ultra 270K + motherboard + 32GB RAM.
-Lowkey the sign that the traditional PC market is sweating hard against those $300 Chinese mini-PCs?
-
-INPUT ARTICLES:
+INPUT DATA:
 {articles}
 
 TWEET 1: [tweet]
-IMAGE_HINT: [2-3 keywords]
+CHART_DATA: [odds, market name, 24h]
 TWEET 2: [tweet]
-IMAGE_HINT: [2-3 keywords]""",
+CHART_DATA: [odds, market name, 24h]""",
     },
 
-    "question": {
-        "weight": 1.5,
+    "crypto_movers": {
+        "weight": 2.0,
         "tweets_per_call": 2,
-        "prompt": """Write 2 debate-starter tweets. You're dropping a hot take in a group chat at midnight.
+        "prompt": """Write 2 tweets about the biggest cryptocurrency movers in the last 24 hours.
 
 RULES:
-- Add 1-2 lines of spicy context, then ask ONE specific question.
-- Not vague ("What's the future of AI?"). Be specific and provocative.
-- Keep it under 170 chars. No hashtags.
-""" + _BANNED_WORDS_BLOCK + """
+- Lead with the price change: "$BTC up/down X% to $XX,XXX"
+- Include volume or market cap context
+- Compare to recent history if data available: "lowest since [date]", "3rd consecutive day of gains"
+- Use $TICKER cashtags for major coins
+- Source: "(CoinGecko data)"
+""" + _FORMAT_RULES + """
 
-EXAMPLE (style reference only):
-Damn. Apple just mass-hired 200 Google engineers in 3 months.
-Honestly... is the talent war getting worse or are we just watching one company eat another alive?
-
-INPUT ARTICLES:
+INPUT DATA:
 {articles}
 
 TWEET 1: [tweet]
-TWEET 2: [tweet]""",
+CHART_DATA: [line, coin name, 7d]
+TWEET 2: [tweet]
+CHART_DATA: [line, coin name, 7d]""",
     },
 
-    "thread": {
+    "dominance_shift": {
+        "weight": 1.0,
+        "tweets_per_call": 1,
+        "prompt": """Write 1 tweet about crypto market dominance or macro market composition changes.
+
+RULES:
+- Focus on BTC dominance, ETH dominance, or total crypto market cap
+- Include the specific percentage and direction of change
+- Add context: what this level historically means
+- Source: "(CoinGecko data)"
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [tweet]
+CHART_DATA: [pie, dominance, 30d]""",
+    },
+
+    "alert_breaking": {
+        "weight": 1.5,
+        "tweets_per_call": 1,
+        "is_alert": True,
+        "prompt": """Write 1 tweet for a significant market movement alert.
+
+RULES:
+- Start with "BREAKING:" or "ALERT:"
+- State the exact movement: what moved, by how much, in what timeframe
+- One line of context maximum
+- Keep under 200 chars (excluding auto-appended disclaimer). Speed matters for alerts.
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [tweet]
+CHART_DATA: [line, asset name, 1h]""",
+    },
+
+    "weekly_recap": {
         "weight": 0.7,
         "tweets_per_call": 1,
         "is_thread": True,
-        "prompt": """Write a 3-tweet thread. Pick the most interesting article.
+        "prompt": """Write a 3-tweet thread recapping the week's key financial data movements.
 
 RULES:
-- THREAD_TWEET 1 (the hook): Bold claim or surprising fact. Must work standalone. End with 🧵
-- THREAD_TWEET 2 (the evidence): Backstory or data. Include a specific number.
-- THREAD_TWEET 3 (the takeaway): What it means for us. End with a question.
-- Each tweet under 220 chars.
-- Start tweet 1 with one emoji from: {emoji_list}
-- Write like you're explaining to a smart friend, not writing an article.
-""" + _BANNED_WORDS_BLOCK + """
+- THREAD_TWEET 1 (hook): The single biggest number of the week. Must work standalone. End with [thread]
+- THREAD_TWEET 2 (markets): Polymarket + crypto summary with specific numbers.
+- THREAD_TWEET 3 (macro): Stock market + macro summary. Include source attributions.
+- Each tweet under 230 chars.
+""" + _FORMAT_RULES + """
 
-INPUT ARTICLES:
+INPUT DATA:
 {articles}
 
-THREAD_TWEET 1: [hook tweet]
-THREAD_TWEET 2: [evidence tweet]
-THREAD_TWEET 3: [takeaway tweet]
-IMAGE_HINT: [2-3 keywords]""",
+THREAD_TWEET 1: [hook]
+THREAD_TWEET 2: [markets]
+THREAD_TWEET 3: [macro]
+CHART_DATA: [bar, weekly movers, 7d]""",
     },
 
-    "poll": {
+    "poll_market": {
         "weight": 0.5,
         "tweets_per_call": 1,
         "is_poll": True,
-        "prompt": """Write a Twitter poll that sparks genuine debate.
+        "prompt": """Write a Twitter poll about current market data.
 
 RULES:
-- The question should be specific and related to the articles.
-- 2-4 options (labeled OPTION_A through OPTION_D).
-- No obvious answer. Make people think.
-- Start with one emoji from: {emoji_list}
-- Question text: max 200 chars.
-- Each option: max 25 chars.
-""" + _BANNED_WORDS_BLOCK + """
+- Reference a SPECIFIC current data point from the input
+- Options should be specific ranges or outcomes (not vague)
+- Not a prediction question. Frame as "Which had the biggest move?" or knowledge-based.
+- 2-4 options, max 25 chars each
+- Question max 180 chars
+""" + _FORMAT_RULES + """
 
-INPUT ARTICLES:
+INPUT DATA:
 {articles}
 
-POLL: [question text]
+POLL: [question]
 OPTION_A: [option]
 OPTION_B: [option]
 OPTION_C: [option]
 OPTION_D: [option]""",
     },
-}
 
-# Legacy single prompt (kept for fallback if template system fails)
-GENERATION_PROMPT = """Write 7 tweets about today's tech news. You're a tech insider DMing your group chat at midnight.
+    "comparison": {
+        "weight": 1.5,
+        "tweets_per_call": 2,
+        "prompt": """Write 2 tweets that compare two financial data points for perspective.
 
 RULES:
-- Hook in the first 8 words. Lead with what makes someone stop scrolling.
-- 140-180 chars sweet spot. Max 220.
-- End every tweet with a question or punchy one-liner.
-- Start each tweet with one emoji from: {emoji_list}
-- Include a specific number when possible.
-- Line breaks between ideas. No em dashes.
-- English only. Max 1 hashtag.
+- Structure: "X is now [value]. For comparison, Y is [value]."
+- Cross-market comparisons are most interesting: Polymarket odds vs actual price, crypto volume vs stock volume
+- Include specific numbers for both data points
+- Source attribution for each data point
+""" + _FORMAT_RULES + """
+
+INPUT DATA:
+{articles}
+
+TWEET 1: [tweet]
+CHART_DATA: [bar, comparison, current]
+TWEET 2: [tweet]
+CHART_DATA: [bar, comparison, current]""",
+    },
+}
+
+# Legacy single prompt (fallback)
+GENERATION_PROMPT = """Write 5 tweets about today's market data. You're a factual financial data aggregator.
+
+RULES:
+- Lead with the most significant number.
+- 180-240 chars. Do NOT include "Not financial advice" (added automatically).
+- Include source attribution.
+- Start each with one of: JUST IN: / MARKET UPDATE: / DATA: / BREAKING:
+- Neutral, professional tone. No opinions or predictions. No emojis.
 
 INPUT:
 {articles}
 
-OUTPUT: Generate exactly 7 tweets, labeled TWEET 1 through TWEET 7. No extra commentary.
-After each tweet, write IMAGE_HINT: [2-3 keywords for an ideal image]."""
+OUTPUT: Generate exactly 5 tweets, labeled TWEET 1 through TWEET 5. No extra commentary.
+After each tweet, write CHART_DATA: [chart type, asset, timeframe]."""
 
 # X / Twitter credentials for twikit (timeline reading)
 X_USERNAME = os.getenv("X_USERNAME", "")
 X_EMAIL = os.getenv("X_EMAIL", "")
 X_PASSWORD = os.getenv("X_PASSWORD", "")
 
-# Engagement reply prompt
-REPLY_GENERATION_PROMPT = """Write a SHORT reply to this tweet. You're a tech insider jumping into a conversation.
+# Engagement reply prompt (disabled for financial bot - liability risk)
+REPLY_GENERATION_PROMPT = """Write a SHORT reply to this tweet. You're a financial data bot providing factual context.
 
 TARGET: @{target_username}
 THEIR TWEET: "{original_tweet}"
 REPLY STYLE: {reply_style}
 
-STYLES:
-- complementary: Add a fact or context they missed. Lead with the fact.
-- witty: Memorable one-liner. Funny but not mean.
-- question: Smart follow-up question that shows you actually know this space.
-- hot_take: Respectful contrarian. "Interesting but..." or "Actually..."
-- agreement: "This." or "Exactly." + amplifying point.
-- emoji_reaction: Short reaction with 1-2 emojis + insight.
-
 RULES:
 - Max {max_length} chars. Aim for 60-140. Shorter = better.
-- Write like you're replying from the couch at midnight. Natural, not formal.
-- NEVER start with "Great tweet", "Interesting post", or any generic compliment.
-- Reference something SPECIFIC from their tweet (a number, name, claim).
-- One idea only. 1-2 sentences max.
+- ONLY provide factual data or context. NEVER give financial advice.
+- Reference a specific number or data point.
+- End with "Not financial advice." if discussing any financial topic.
 - No hashtags. No em dashes. English only.
 
 Generate exactly 3 options:
@@ -330,11 +338,7 @@ REPLY 1: [reply]
 REPLY 2: [reply]
 REPLY 3: [reply]"""
 
-# Image APIs (optional, for stock photo fallback)
-UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "")
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
-
-# Image storage
+# Image storage (charts generated by matplotlib)
 IMAGE_DIR = os.path.join(os.path.dirname(__file__), "data", "images")
 
 # Database
