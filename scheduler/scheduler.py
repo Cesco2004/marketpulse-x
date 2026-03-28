@@ -320,7 +320,7 @@ class QuantumScheduler:
                             from dateutil import parser as dp
                             created_dt = dp.parse(str(created_at))
                             age_hours = (datetime.utcnow() - created_dt.replace(tzinfo=None)).total_seconds() / 3600
-                            if age_hours > 4:
+                            if age_hours > 2:
                                 is_stale = True
                                 from storage.database import update_post_status
                                 update_post_status(post_id, "expired")

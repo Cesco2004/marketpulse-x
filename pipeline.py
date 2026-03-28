@@ -45,9 +45,9 @@ def run_fetch_pipeline():
         "errors": [],
     }
 
-    # Step 0: Expire stale tweets from previous fetch cycles (older than 4 hours)
+    # Step 0: Expire stale tweets from previous fetch cycles (older than 2 hours)
     try:
-        expired_count = expire_stale_posts(max_age_hours=4)
+        expired_count = expire_stale_posts(max_age_hours=2)
         if expired_count:
             result["expired_stale"] = expired_count
     except Exception:
