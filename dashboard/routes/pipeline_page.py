@@ -31,7 +31,7 @@ def queue_tab():
             s = int(round(post["quality_score"]))
             sc = "score-good" if s >= 70 else ("score-warn" if s >= 50 else "score-bad")
             score_html = f'<span class="score-badge {sc}" style="width:28px;height:28px;font-size:0.65rem">{s}</span>'
-        img_badge = '<span class="badge" style="background:rgba(99,102,241,0.12);color:var(--qb-accent-soft);font-size:0.65rem">IMG</span>' if post.get("has_image") else ""
+        img_badge = '<span class="badge" style="background:rgba(99,102,241,0.12);color:var(--qb-accent-soft);font-size:0.65rem">IMG</span>' if post["has_image"] else ""
 
         html_parts.append(f'''
         <div class="post-card" id="queue-card-{post["id"]}">
@@ -64,7 +64,7 @@ def published_tab():
     html_parts = []
     for post in posts:
         x_link = ""
-        if post.get("x_tweet_id"):
+        if post["x_tweet_id"]:
             x_link = f'<a href="https://x.com/QEdgeIntel/status/{post["x_tweet_id"]}" target="_blank" style="font-size:0.78rem">View on X</a>'
 
         html_parts.append(f'''
@@ -73,7 +73,7 @@ def published_tab():
             <div class="post-meta">
                 <span class="badge badge-{post["post_type"]}">{post["post_type"]}</span>
                 <span style="font-size:0.78rem">{len(post["content"])} chars</span>
-                <span style="color:var(--qb-gray);font-size:0.78rem">{post.get("posted_at", "unknown")}</span>
+                <span style="color:var(--qb-gray);font-size:0.78rem">{post["posted_at"] or "unknown"}</span>
                 {x_link}
             </div>
         </div>

@@ -24,7 +24,7 @@ def review_page():
     # Collect narratives for each batch (cache to avoid repeated queries)
     batch_narratives = {}
     for post in posts:
-        bid = post.get("batch_id")
+        bid = post["batch_id"] if "batch_id" in post.keys() else None
         if bid and bid not in batch_narratives:
             batch_narratives[bid] = get_narratives_for_batch(bid)
 
