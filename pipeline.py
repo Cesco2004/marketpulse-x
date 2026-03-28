@@ -175,8 +175,8 @@ def run_fetch_pipeline():
             result["success"] = True
 
             # Auto-reject low quality + auto-approve high quality
-            auto_reject = quality_config.get("auto_reject_below", 30.0)
-            auto_approve = quality_config.get("auto_approve_above", 70.0)
+            auto_reject = quality_config.get("auto_reject_below", 25.0)
+            auto_approve = quality_config.get("auto_approve_above", 60.0)
             from storage.database import get_pending_posts
             pending = get_pending_posts()
             auto_rejected_count = 0

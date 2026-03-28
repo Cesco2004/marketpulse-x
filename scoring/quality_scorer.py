@@ -39,8 +39,8 @@ DEFAULT_CONFIG = {
     "weight_tone": 0.25,      # Replaces weight_vibes (increased from 0.20)
     "weight_vibes": 0.00,     # Deprecated, kept for DB compat
     "weight_data_accuracy": 0.20,  # New: disclaimer, numbers, no predictions
-    "min_quality_score": 50.0,
-    "auto_reject_below": 30.0,
+    "min_quality_score": 45.0,
+    "auto_reject_below": 25.0,
 }
 
 # Passive voice markers
@@ -488,6 +488,8 @@ COMPARISON_WORDS = {
     "more than", "less than", "compared to", "versus", "vs", "outpaces",
     "doubles", "triples", "surpasses", "overtakes", "beats", "faster than",
     "bigger than", "smaller than", "unlike",
+    "highest since", "lowest since", "up from", "down from", "above average",
+    "below average", "for comparison", "near", "flat at",
 }
 
 
@@ -567,7 +569,7 @@ def score_substance(text, config=None):
     text_lower = text.lower()
     clean = EMOJI_RE.sub("", text).strip()
 
-    # --- Specificity (0-40 points) ---
+    # --- Specificity (0-60 points) ---
 
     # Proper nouns / named entities
     entities = _extract_entities(text)
@@ -576,28 +578,31 @@ def score_substance(text, config=None):
         score += 10
         bonuses.append(f"Named entity: {proper_nouns[0]} (+10)")
 
-    # Specific number or dollar amount
-    has_dollar = bool(re.search(r"\$[\d,.]+[BMKbmk]?", text))
-    has_specific_number = bool(re.search(r"\b\d{2,}\b", clean))
-    has_percentage = bool(re.search(r"\d+%", text))
-    if has_dollar:
-        score += 15
-        bonuses.append("Dollar amount (+15)")
-    elif has_percentage:
-        score += 12
-        bonuses.append("Percentage (+12)")
-    elif has_specific_number:
-        score += 8
-        bonuses.append("Specific number (+8)")
+    # Dollar amounts (cumulative - each one adds value)
+    dollar_matches = re.findall(r"\$[\d,.]+[BMKTbmkt]?", text)
+    if dollar_matches:
+        pts = min(len(dollar_matches) * 8, 20)
+        score += pts
+        bonuses.append(f"Dollar amounts x{len(dollar_matches)} (+{pts})")
 
-    # Acronyms (company/org references)
-    acronyms = [e for e in entities if e.isupper() and len(e) >= 2]
-    if acronyms:
-        score += 10
-        bonuses.append(f"Entity reference: {acronyms[0] if acronyms else ''} (+10)")
+    # Percentages (cumulative)
+    pct_matches = re.findall(r"[\d.]+%", text)
+    if pct_matches:
+        pts = min(len(pct_matches) * 6, 15)
+        score += pts
+        bonuses.append(f"Percentages x{len(pct_matches)} (+{pts})")
+
+    # Cashtags ($BTC, $ETH) - strong financial signal
+    cashtags = re.findall(r"\$[A-Z]{2,5}\b", text)
+    if cashtags:
+        pts = min(len(cashtags) * 5, 10)
+        score += pts
+        bonuses.append(f"Cashtags x{len(cashtags)} (+{pts})")
 
     # Time reference (recency signal)
-    time_words = ["just", "today", "this week", "yesterday", "announced", "launches", "launched"]
+    time_words = ["in 24h", "in 1h", "today", "this week", "7-day", "7d", "30-day",
+                  "since march", "since april", "since january", "highest since",
+                  "lowest since", "consecutive", "week-over-week"]
     if any(w in text_lower for w in time_words):
         score += 5
         bonuses.append("Time reference (+5)")
