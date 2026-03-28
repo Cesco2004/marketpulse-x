@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Pipeline - QEdge Intel{% endblock %}
+
+{% block content %}
+<h2>Pipeline</h2>
+
+<!-- Tab bar -->
+<div style="display:flex;gap:0;border-bottom:1px solid var(--border-color);margin-bottom:1rem">
+    <button id="tab-queue" class="tab-btn active"
+            hx-get="/api/pipeline/queue" hx-target="#tab-content" hx-swap="innerHTML"
+            onclick="document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')">
+        Queue <span style="font-size:0.72rem;opacity:0.7">({{ queue_posts|length }})</span>
+    </button>
+    <button id="tab-published" class="tab-btn"
+            hx-get="/api/pipeline/published" hx-target="#tab-content" hx-swap="innerHTML"
+            onclick="document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')">
+        Published <span style="font-size:0.72rem;opacity:0.7">({{ published_posts|length }})</span>
+    </button>
+</div>
+
+<!-- Tab content -->
+<div id="tab-content">
+    <!-- Default: Queue tab -->
+    {% if queue_posts %}
+    {% for post in queue_posts %}
+    <div class="post-card" id="queue-card-{{ post.id }}">
+        <div class="post-meta" style="margin-bottom:0.4rem">
+            <strong>#{{ loop.index }}</strong>
+            <span class="badge badge-{{ post.post_type }}">{{ post.post_type }}</span>
+            {% set clen = post.content|length %}
+            <span class="{% if clen <= 260 %}chars-ok{% elif clen <= 280 %}chars-warn{% else %}chars-over{% endif %}">
+                {{ clen }} chars
+            </span>
+            {% if post.has_image %}
+            <span class="badge" style="background:rgba(99,102,241,0.12);color:var(--qb-accent-soft);font-size:0.65rem">IMG</span>
+            {% endif %}
+            {% if post.quality_score is not none %}
+            <span class="score-badge {% if post.quality_score >= 70 %}score-good{% elif post.quality_score >= 50 %}score-warn{% else %}score-bad{% endif %}" style="width:28px;height:28px;font-size:0.65rem">
+                {{ post.quality_score|round(0)|int }}
+            </span>
+            {% endif %}
+        </div>
+        <div class="post-content">{{ post.content }}</div>
+        <div class="post-actions">
+            <button hx-post="/api/posts/{{ post.id }}/post-now"
+                    hx-target="#queue-card-{{ post.id }}" hx-swap="outerHTML"
+                    hx-confirm="Post this tweet now?">Post Now</button>
+            <button class="outline secondary"
+                    hx-post="/api/posts/{{ post.id }}/unqueue"
+                    hx-target="#queue-card-{{ post.id }}" hx-swap="outerHTML">Remove</button>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div style="color:var(--text-secondary);padding:2rem;text-align:center">Queue is empty. <a href="/review">Review pending posts</a> to add them.</div>
+    {% endif %}
+</div>
+
+<style>
+.tab-btn {
+    padding: 0.6rem 1.2rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover {
+    color: var(--text-primary);
+}
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+</style>
+{% endblock %}

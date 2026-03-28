@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Markets - QEdge Intel{% endblock %}
+
+{% block content %}
+<h2>Markets</h2>
+
+<!-- Alerts Section -->
+<div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Market Alerts</span>
+    {% set pending_count = alerts|length %}
+    {% if pending_count > 0 %}
+    <span class="badge" style="background:rgba(248,113,113,0.15);color:var(--qb-red)">{{ pending_count }} pending</span>
+    {% else %}
+    <span style="font-size:0.75rem;color:var(--qb-dim)">No pending alerts</span>
+    {% endif %}
+</div>
+
+<div id="alerts-section" hx-get="/api/markets/alerts" hx-trigger="every 30s" hx-swap="innerHTML">
+{% if alerts %}
+    {% for a in alerts %}
+    {% set mag_color = 'var(--qb-red)' if a.magnitude >= 5 else ('var(--qb-yellow)' if a.magnitude >= 3 else 'var(--qb-accent-soft)') %}
+    <div class="post-card" id="alert-{{ a.id }}" style="border-left:3px solid {{ mag_color }};padding:0.6rem 0.8rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <span style="font-weight:700">{{ a.asset_name }}</span>
+                <span class="badge" style="margin-left:0.4rem;background:{{ mag_color }}22;color:{{ mag_color }}">{{ a.alert_type }}</span>
+                <span style="font-size:0.82rem;color:{{ mag_color }};font-weight:600;margin-left:0.4rem">{{ '%+.1f'|format(a.magnitude) }}%</span>
+            </div>
+            <div style="display:flex;gap:0.3rem">
+                <button class="outline secondary" style="padding:0.2rem 0.5rem;font-size:0.7rem"
+                        hx-post="/api/markets/alerts/{{ a.id }}/dismiss"
+                        hx-target="#alert-{{ a.id }}"
+                        hx-swap="outerHTML">Dismiss</button>
+            </div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--qb-dim);margin-top:0.2rem">{{ a.description or a.source }} &middot; {{ a.detected_at[:16] }}</div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div style="color:var(--text-secondary);padding:1rem;text-align:center;font-size:0.85rem">No pending alerts. Alerts trigger on big market moves (&gt;8% Polymarket, &gt;4% crypto, &gt;2% index).</div>
+{% endif %}
+</div>
+
+<!-- Narratives Section -->
+<div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-top:2rem">
+    <span>Cross-Market Narratives (24h)</span>
+    {% if narratives %}
+    <span style="font-size:0.75rem;color:var(--qb-dim)">{{ narratives|length }} detected</span>
+    {% endif %}
+</div>
+
+<div id="narratives-section" hx-get="/api/markets/narratives" hx-trigger="every 60s" hx-swap="innerHTML">
+{% if narratives %}
+    {% for n in narratives %}
+    <div class="post-card" style="border-left:3px solid {{ n.display_color }};padding:0.6rem 0.8rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <span class="badge" style="background:{{ n.display_color }}22;color:{{ n.display_color }}">{{ n.display_label }}</span>
+                <span style="font-weight:600;margin-left:0.4rem">{{ n.label }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:0.4rem">
+                {% set strength_pct = (n.strength * 100)|int %}
+                <div style="width:60px;height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden">
+                    <div style="height:100%;width:{{ strength_pct }}%;background:{{ n.display_color }};border-radius:2px"></div>
+                </div>
+                <span style="font-size:0.72rem;color:{{ n.display_color }};font-weight:600">{{ strength_pct }}%</span>
+            </div>
+        </div>
+        {% if n.synthesis_hint %}
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.3rem">{{ n.synthesis_hint }}</div>
+        {% endif %}
+        {% if n.data_points_list %}
+        <div style="display:flex;flex-wrap:wrap;gap:0.2rem;margin-top:0.3rem">
+            {% for dp in n.data_points_list[:5] %}
+            <span class="penalty-tag" style="background:{{ n.display_color }}15;color:{{ n.display_color }};border-color:{{ n.display_color }}33">{{ dp }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div style="font-size:0.65rem;color:var(--qb-dim);margin-top:0.3rem">Batch: {{ n.batch_id or '?' }} &middot; {{ n.detected_at[:16] }}</div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div style="color:var(--text-secondary);padding:1rem;text-align:center;font-size:0.85rem">
+        No narratives detected in the last 24h. Run a fetch cycle to detect cross-market patterns
+        (risk regime, divergences, policy-to-price, volatility gaps, dominance rotation).
+    </div>
+{% endif %}
+</div>
+
+<!-- Sources Section -->
+<div class="section-title" style="margin-top:2rem">Data Sources</div>
+
+{% for cat_key, cat_info in categories.items() %}
+{% set cat_sources = sources_by_cat.get(cat_key, []) %}
+{% if cat_sources %}
+<div style="margin-bottom:0.5rem;font-size:0.82rem;color:{{ cat_info.color }}">
+    {{ cat_info.icon }} {{ cat_info.label }}
+    <span style="opacity:0.6">({{ cat_sources|length }})</span>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:0.75rem;margin-bottom:1.5rem">
+    {% for src in cat_sources %}
+    <div class="post-card" id="source-card-{{ src.id }}" style="border-left:3px solid {{ cat_info.color }};padding:0.6rem 0.8rem;{% if not src.is_enabled %}opacity:0.5{% endif %}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+                <span style="font-weight:700">{{ src.name }}</span>
+                <div style="font-size:0.7rem;color:var(--qb-dim)">{{ src.api_url }}</div>
+            </div>
+            <div style="display:flex;gap:0.25rem;align-items:center">
+                {% if not src.is_enabled %}
+                <span class="badge" style="background:rgba(248,113,113,0.15);color:var(--qb-red);font-size:0.65rem">OFF</span>
+                {% endif %}
+                {% if src.pending_alerts > 0 %}
+                <span class="badge" style="background:rgba(248,113,113,0.2);color:var(--qb-red);font-size:0.65rem">{{ src.pending_alerts }} alert{{ 's' if src.pending_alerts > 1 }}</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="display:flex;gap:1.2rem;margin-top:0.5rem;font-size:0.78rem">
+            <div>
+                <div style="color:var(--qb-dim);font-size:0.65rem">Data Points</div>
+                <div style="font-weight:700;color:var(--qb-accent-soft)">{{ src.data_points }}</div>
+            </div>
+            <div>
+                <div style="color:var(--qb-dim);font-size:0.65rem">Last Fetch</div>
+                <div style="font-weight:600;font-size:0.75rem">{{ src.last_fetched }}</div>
+            </div>
+        </div>
+
+        <div style="margin-top:0.5rem">
+            <button class="outline" style="padding:0.2rem 0.6rem;font-size:0.72rem;{% if src.is_enabled %}border-color:var(--qb-yellow);color:var(--qb-yellow){% else %}border-color:var(--qb-green);color:var(--qb-green){% endif %}"
+                    hx-post="/api/sources/{{ src.id }}/toggle"
+                    hx-target="#source-card-{{ src.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="{% if src.is_enabled %}Disable{% else %}Enable{% endif %} {{ src.name }}?">
+                {% if src.is_enabled %}Disable{% else %}Enable{% endif %}
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endfor %}
+
+{% if not sources_by_cat %}
+<div style="text-align:center;padding:3rem;color:var(--text-secondary)">
+    No sources configured. Run <code>python main.py fetch</code> to initialize.
+</div>
+{% endif %}
+{% endblock %}

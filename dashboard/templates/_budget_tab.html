@@ -1,0 +1,113 @@
+<!-- Budget Tab (HTML fragment for HTMX) -->
+
+<!-- Monthly Budget Overview -->
+<div class="section-title">Monthly Budget</div>
+<div class="usage-grid">
+    <div class="usage-card">
+        <h4>Mistral</h4>
+        <div class="usage-number">{{ "{:,}".format(mistral_budget.tokens_used) }} <span style="font-size:0.7rem;color:var(--text-secondary)">/ {{ "{:,}".format(mistral_budget.monthly_limit) }}</span></div>
+        <div class="usage-detail">tokens this month ({{ mistral_budget.pct_used }}%)</div>
+        <div class="progress-track" style="margin:0.5rem 0;height:8px">
+            <div class="progress-fill" style="width:{{ [mistral_budget.pct_used, 100]|min }}%;background:{% if mistral_budget.pct_used < 60 %}var(--green){% elif mistral_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
+        </div>
+        <div class="usage-detail">{{ mistral_monthly.calls }} calls &middot; ~{{ "%.4f"|format(mistral_monthly.total_cost) }} EUR</div>
+        <div class="usage-detail" style="margin-top:0.3rem">
+            Projected: {{ "{:,}".format(mistral_budget.projected_end_of_month) }} &middot;
+            ~{{ "{:,}".format(mistral_budget.daily_avg_used) }}/day avg &middot;
+            {{ mistral_budget.days_remaining }} days left
+        </div>
+        <div class="usage-detail" style="margin-top:0.25rem">
+            Status: <strong style="{% if mistral_budget.pace_status == 'on_track' %}color:var(--green){% elif mistral_budget.pace_status == 'ahead' %}color:var(--yellow){% else %}color:var(--red){% endif %}">
+                {% if mistral_budget.pace_status == "on_track" %}On track{% elif mistral_budget.pace_status == "ahead" %}Ahead of pace{% elif mistral_budget.pace_status == "critical" %}Critical{% else %}Exhausted{% endif %}
+            </strong>
+        </div>
+    </div>
+    <div class="usage-card">
+        <h4>Groq</h4>
+        <div class="usage-number">{{ "{:,}".format(groq_budget.tokens_used) }} <span style="font-size:0.7rem;color:var(--text-secondary)">/ {{ "{:,}".format(groq_budget.monthly_limit) }}</span></div>
+        <div class="usage-detail">tokens this month ({{ groq_budget.pct_used }}%)</div>
+        <div class="progress-track" style="margin:0.5rem 0;height:8px">
+            <div class="progress-fill" style="width:{{ [groq_budget.pct_used, 100]|min }}%;background:{% if groq_budget.pct_used < 60 %}var(--green){% elif groq_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
+        </div>
+        {% if groq_monthly.calls > 0 %}
+        <div class="usage-detail">{{ groq_monthly.calls }} calls &middot; Free tier</div>
+        {% else %}
+        <div class="usage-detail">Ready &middot; No calls yet this month</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Token Breakdown -->
+<div class="section-title">Token Breakdown (This Month)</div>
+<div class="usage-grid">
+    <div class="usage-card">
+        <h4>Mistral by Endpoint</h4>
+        {% if mistral_by_endpoint %}
+        <table style="width:100%;font-size:0.82rem">
+            <thead>
+                <tr><th style="text-align:left">Endpoint</th><th>Calls</th><th>Tokens</th><th>Cost</th></tr>
+            </thead>
+            <tbody>
+                {% for ep in mistral_by_endpoint %}
+                <tr>
+                    <td>{{ ep.endpoint }}</td>
+                    <td style="text-align:center">{{ ep.calls }}</td>
+                    <td style="text-align:right">{{ "{:,}".format(ep.total_tokens) }}</td>
+                    <td style="text-align:right">{{ "%.4f"|format(ep.total_cost) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="usage-detail">No Mistral calls this month</div>
+        {% endif %}
+    </div>
+    <div class="usage-card">
+        <h4>Groq by Endpoint</h4>
+        {% if groq_by_endpoint %}
+        <table style="width:100%;font-size:0.82rem">
+            <thead>
+                <tr><th style="text-align:left">Endpoint</th><th>Calls</th><th>Tokens</th></tr>
+            </thead>
+            <tbody>
+                {% for ep in groq_by_endpoint %}
+                <tr>
+                    <td>{{ ep.endpoint }}</td>
+                    <td style="text-align:center">{{ ep.calls }}</td>
+                    <td style="text-align:right">{{ "{:,}".format(ep.total_tokens) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="usage-detail">No Groq calls this month</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- All-Time Summary -->
+<div class="section-title">All-Time Summary</div>
+<div class="usage-grid">
+    <div class="usage-card">
+        <h4>Mistral AI</h4>
+        <div class="usage-number">{{ "{:,}".format(usage.mistral_tokens_total) }}</div>
+        <div class="usage-detail">tokens used total</div>
+        <div style="margin-top:0.5rem">
+            <div class="usage-detail">{{ "{:,}".format(usage.mistral_tokens_input) }} input &middot; {{ "{:,}".format(usage.mistral_tokens_output) }} output</div>
+            <div class="usage-detail">{{ usage.mistral_calls }} API calls &middot; ~{{ "%.4f"|format(usage.mistral_cost) }} EUR</div>
+        </div>
+    </div>
+    <div class="usage-card">
+        <h4>X / Twitter API</h4>
+        <div class="usage-number">{{ usage.x_posts }}</div>
+        <div class="usage-detail">tweets posted via API</div>
+        <div style="margin-top:0.5rem">
+            <div class="usage-detail">~${{ "%.4f"|format(usage.x_cost) }} USD est.</div>
+        </div>
+    </div>
+</div>
+
+<style>
+.progress-track { height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+</style>

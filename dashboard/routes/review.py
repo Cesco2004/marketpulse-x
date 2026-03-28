@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request
-from storage.database import get_pending_posts, update_post_status, update_post_content, get_post_by_id, clear_post_image, get_connection
+from storage.database import get_pending_posts, update_post_status, update_post_content, get_post_by_id, clear_post_image, get_connection, get_narratives_for_batch
 
 bp = Blueprint("review", __name__)
 
@@ -21,7 +21,15 @@ def review_page():
         batch_stats[row["status"]] = row["cnt"]
     conn.close()
 
-    return render_template("review.html", posts=posts, batch_stats=batch_stats)
+    # Collect narratives for each batch (cache to avoid repeated queries)
+    batch_narratives = {}
+    for post in posts:
+        bid = post.get("batch_id")
+        if bid and bid not in batch_narratives:
+            batch_narratives[bid] = get_narratives_for_batch(bid)
+
+    return render_template("review.html", posts=posts, batch_stats=batch_stats,
+                           batch_narratives=batch_narratives)
 
 
 @bp.route("/api/posts/<int:post_id>/approve", methods=["POST"])

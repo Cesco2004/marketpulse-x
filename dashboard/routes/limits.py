@@ -42,7 +42,8 @@ def _render_page(**extra):
 
 @bp.route("/limits")
 def limits_page():
-    return _render_page()
+    from flask import redirect
+    return redirect("/settings?tab=safety")
 
 
 @bp.route("/api/limits/save-limits", methods=["POST"])
@@ -128,7 +129,7 @@ def toggle_kill_switch():
 
 @bp.route("/api/limits/test-email", methods=["POST"])
 def test_email():
-    ok = send_alert_email("Test alert", "This is a test email from Quantum Brief Bot.\n\nIf you see this, email alerts are working.")
+    ok = send_alert_email("Test alert", "This is a test email from QEdge Intel Bot.\n\nIf you see this, email alerts are working.")
     if ok:
         return "", 200, {"HX-Trigger": '{"showToast": {"message": "Test email sent!", "type": "success"}}'}
     else:

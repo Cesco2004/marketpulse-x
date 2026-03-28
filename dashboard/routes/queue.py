@@ -1,5 +1,5 @@
-from flask import Blueprint, render_template
-from storage.database import get_approved_posts, update_post_status, mark_as_posted, get_post_by_id
+from flask import Blueprint, redirect
+from storage.database import get_post_by_id, update_post_status, mark_as_posted
 from pipeline import publish_post
 
 bp = Blueprint("queue", __name__)
@@ -7,8 +7,7 @@ bp = Blueprint("queue", __name__)
 
 @bp.route("/queue")
 def queue_page():
-    posts = get_approved_posts()
-    return render_template("queue.html", posts=posts)
+    return redirect("/pipeline")
 
 
 @bp.route("/api/posts/<int:post_id>/post-now", methods=["POST"])
@@ -20,13 +19,13 @@ def post_now(post_id):
     try:
         tweet_id, has_image = publish_post(post)
         mark_as_posted(post_id, tweet_id)
-        img_badge = ' 📷' if has_image else ''
+        img_badge = ' IMG' if has_image else ''
         return f'''
         <div class="post-card" style="border-color:var(--qb-green);opacity:0.7">
             <div class="post-content">{post["content"]}</div>
             <div class="post-meta">
                 <strong style="color:var(--qb-green)">Posted!{img_badge}</strong>
-                <a href="https://x.com/i/status/{tweet_id}" target="_blank">View on X</a>
+                <a href="https://x.com/QEdgeIntel/status/{tweet_id}" target="_blank">View on X</a>
             </div>
         </div>
         '''

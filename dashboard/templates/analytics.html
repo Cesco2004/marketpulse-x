@@ -1,13 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Analytics - Quantum Brief{% endblock %}
+{% block title %}Analytics - QEdge Intel{% endblock %}
 
 {% block content %}
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
     <h2>Analytics</h2>
-    <div class="filter-group">
-        <a href="/analytics?period=7" role="button" {% if period == '7' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>7d</a>
-        <a href="/analytics?period=30" role="button" {% if period == '30' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>30d</a>
-        <a href="/analytics?period=90" role="button" {% if period == '90' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>90d</a>
+    <div style="display:flex;gap:0.75rem;align-items:center">
+        <div class="filter-group">
+            <a href="/analytics?period=7" role="button" {% if period == '7' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>7d</a>
+            <a href="/analytics?period=30" role="button" {% if period == '30' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>30d</a>
+            <a href="/analytics?period=90" role="button" {% if period == '90' %}style="background:var(--accent);color:white;border-color:var(--accent)"{% endif %}>90d</a>
+        </div>
+        <a href="/calendar" style="font-size:0.78rem;padding:0.35rem 0.8rem;border:1px solid var(--border-color);border-radius:6px;color:var(--text-secondary)">Schedule &amp; Calendar</a>
     </div>
 </div>
 

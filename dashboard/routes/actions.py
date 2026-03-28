@@ -12,14 +12,14 @@ def fetch_action():
     if result.get("skipped_reason") == "no_new_articles":
         html = f'''
         <article style="border-left:4px solid var(--qb-accent);padding-left:1rem">
-            <h4 style="color:var(--qb-accent-soft)">No New Articles</h4>
-            <p><strong>{result["articles_fetched"]}</strong> articles fetched from RSS feeds, but all were already in the database.</p>
-            <p style="color:var(--qb-dim);font-size:0.85rem">No Mistral tokens spent. Try again later when feeds have new content.</p>
+            <h4 style="color:var(--qb-accent-soft)">No New Data</h4>
+            <p><strong>{result["articles_fetched"]}</strong> data points fetched from market sources, but all were already in the database.</p>
+            <p style="color:var(--qb-dim);font-size:0.85rem">No Mistral tokens spent. Try again later when markets have new data.</p>
         </article>
         '''
         resp = make_response(html)
         resp.headers["HX-Trigger"] = json.dumps({
-            "showToast": {"type": "info", "message": "No new articles found — no tokens spent."}
+            "showToast": {"type": "info", "message": "No new data found — no tokens spent."}
         })
         return resp
 
@@ -39,9 +39,9 @@ def fetch_action():
         <article style="border-left:4px solid var(--qb-green);padding-left:1rem">
             <h4 style="color:var(--qb-green)">Fetch & Generate Complete</h4>
             <ul>
-                <li><strong>{result["articles_fetched"]}</strong> articles fetched from RSS</li>
-                <li><strong>{result["articles_saved"]}</strong> new articles saved</li>
-                <li><strong>{len(result["selected"])}</strong> articles selected by Mistral</li>
+                <li><strong>{result["articles_fetched"]}</strong> data points fetched</li>
+                <li><strong>{result["articles_saved"]}</strong> new data points saved</li>
+                <li><strong>{len(result["selected"])}</strong> selected for generation</li>
                 <li><strong>{posts_count}</strong> posts generated (batch: {result["batch_id"]})</li>
             </ul>
             <div style="display:flex;gap:1rem;font-size:0.85rem;margin:0.5rem 0">

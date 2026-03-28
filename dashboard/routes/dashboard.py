@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request
-from storage.database import get_stats, get_api_usage_summary, get_engagement_config, get_engagement_replies_today, get_schedule_config, get_kill_switch, get_analytics_config, get_daily_tweet_count
+from storage.database import get_stats, get_api_usage_summary, get_engagement_config, get_engagement_replies_today, get_schedule_config, get_kill_switch, get_analytics_config, get_daily_tweet_count, get_alert_stats, get_pending_alerts, get_recent_narratives
 from limiter.budget_forecaster import get_budget_status
 from limiter.system_health import get_system_health
 
@@ -84,7 +84,15 @@ def index():
     next_post = scheduler.next_post_time
     next_post_str = next_post.strftime('%H:%M UTC') if next_post else None
 
+    # Market intelligence
+    alert_stats = get_alert_stats()
+    pending_alerts = get_pending_alerts()[:3]  # Top 3 most urgent
+    recent_narratives = get_recent_narratives(hours=24)[:3]  # Latest 3
+
     return render_template("dashboard.html", stats=stats, usage=usage, processes=processes,
+                           alert_stats=alert_stats,
+                           pending_alerts=pending_alerts,
+                           recent_narratives=recent_narratives,
                            kill_switch_active=bool(ks.get("is_killed")),
                            kill_switch_reason=ks.get("killed_reason", ""),
                            mistral_budget=mistral_budget,

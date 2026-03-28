@@ -15,6 +15,7 @@ from storage.database import (
     get_image_config,
     update_post_status,
     expire_stale_posts,
+    save_narratives,
 )
 from sources.aggregator import fetch_all_sources, format_financial_data_for_prompt
 from sources.correlation_engine import detect_narratives
@@ -69,6 +70,10 @@ def run_fetch_pipeline():
     saved, new_urls = save_articles(articles)
     result["articles_saved"] = saved
 
+    # Generate batch_id early so narratives can be linked to it
+    batch_id = get_batch_id()
+    result["batch_id"] = batch_id
+
     # Step 1b: Detect cross-source narratives (correlation engine)
     try:
         narratives = detect_narratives(articles)
@@ -76,6 +81,9 @@ def run_fetch_pipeline():
             {"pattern": n["pattern_type"], "label": n["label"], "strength": n["strength"]}
             for n in narratives
         ]
+        # Persist narratives for dashboard visibility
+        if narratives:
+            save_narratives(narratives, batch_id)
     except Exception as e:
         narratives = []
         result["errors"].append(f"Narrative detection failed (non-fatal): {e}")
@@ -190,9 +198,7 @@ def run_fetch_pipeline():
         result["posts"] = posts
 
         if posts:
-            batch_id = get_batch_id()
             save_posts(posts, batch_id, source_article_ids=source_ids)
-            result["batch_id"] = batch_id
             result["success"] = True
 
             # Auto-reject low quality + auto-approve high quality

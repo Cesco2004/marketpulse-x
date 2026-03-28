@@ -1,4 +1,4 @@
-/* Quantum Brief Dashboard — X Console inspired */
+/* QEdge Intel Dashboard — X Console inspired */
 
 :root {
     --bg-primary: #000000;
@@ -97,6 +97,14 @@ p { margin: 0 0 0.5rem 0; color: var(--text-secondary); }
     border-right: 2px solid var(--accent);
 }
 .sidebar-nav .nav-icon { font-size: 1.1rem; width: 1.4rem; text-align: center; }
+.sidebar-nav .nav-group-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    padding: 0.8rem 1.25rem 0.25rem;
+}
 
 .main-content {
     margin-left: 240px;

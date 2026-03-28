@@ -100,8 +100,8 @@ def edit_account_form(account_id):
     if not a:
         return ""
 
-    categories = ["general", "quantum", "ai", "robotics", "tech", "influencer",
-                   "competitor", "event", "journalist", "analyst", "finance", "media", "govmil"]
+    categories = ["general", "crypto", "macro", "markets", "analyst", "ai", "tech",
+                   "influencer", "competitor", "finance", "media", "journalist"]
     styles = ["mixed", "complementary", "witty", "question", "hot_take", "agreement", "emoji_reaction"]
 
     cat_options = "".join(

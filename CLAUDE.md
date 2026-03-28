@@ -20,7 +20,7 @@ Sources (Polymarket + CoinGecko + yfinance + Fear&Greed + Calendar)
   -> Publisher (X/Twitter API via tweepy)
 ```
 
-- **Dashboard**: Flask + HTMX at port 5001 (gunicorn, 1 worker, 4 threads)
+- **Dashboard**: Flask + HTMX at port 5001 (gunicorn, 1 worker, 4 threads), 7-page layout
 - **Database**: SQLite at `data/quantum_brief.db`
 - **LLM**: Mistral (primary), Groq/Llama 3.3 70B (fallback)
 - **Charts**: matplotlib-generated images (dark theme, 1200x628px)
@@ -50,9 +50,15 @@ Sources (Polymarket + CoinGecko + yfinance + Fear&Greed + Calendar)
 | Scheduler | `scheduler/scheduler.py` |
 | Dashboard app | `dashboard/app.py` |
 | Dashboard routes | `dashboard/routes/` |
+| Markets page (alerts + narratives) | `dashboard/routes/markets.py` |
+| Pipeline page (queue + history) | `dashboard/routes/pipeline_page.py` |
 
 ## Conventions
 
+- Dashboard: 7 pages — Command Center (/), Markets (/markets), Review (/review), Pipeline (/pipeline), Analytics (/analytics), Engagement (/engagement), Settings (/settings with tabs: Quality, Budget, Safety)
+- Old routes (/articles, /sources, /queue, /history, /usage, /limits) redirect to their new locations
+- Correlation engine narratives persisted in `narrative_log` table, linked by batch_id
+- Quality scoring: 7 components (substance, tone, data_accuracy, variety, anti_ai, readability, format) — all visible in Review and Settings
 - Every tweet MUST end with "Not financial advice."
 - Never include buy/sell recommendations in generated content
 - System prompt and templates live in `config.py`

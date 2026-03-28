@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Quantum Brief{% endblock %}</title>
+    <title>{% block title %}QEdge Intel{% endblock %}</title>
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='logo.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -14,43 +14,31 @@
         <aside class="sidebar">
             <a href="/" class="sidebar-brand">
                 <img src="{{ url_for('static', filename='logo.png') }}" alt="QB">
-                <strong>Quantum Brief</strong>
+                <strong>QEdge Intel</strong>
             </a>
             <ul class="sidebar-nav">
+                <li class="nav-group-label">Operations</li>
                 <li><a href="/" {% if request.path == '/' %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9633;</span> Dashboard
+                    <span class="nav-icon">&#9633;</span> Command Center
                 </a></li>
-                <li><a href="/sources" {% if '/sources' in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9881;</span> Sources
-                </a></li>
-                <li><a href="/articles" {% if '/articles' in request.path and '/sources' not in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9783;</span> Articles
+                <li><a href="/markets" {% if '/markets' in request.path or '/sources' in request.path %}class="active"{% endif %}>
+                    <span class="nav-icon">&#127760;</span> Markets
                 </a></li>
                 <li><a href="/review" {% if '/review' in request.path %}class="active"{% endif %}>
                     <span class="nav-icon">&#9998;</span> Review
                 </a></li>
-                <li><a href="/calendar" {% if '/calendar' in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9776;</span> Calendar
+                <li><a href="/pipeline" {% if '/pipeline' in request.path or '/queue' in request.path or '/history' in request.path %}class="active"{% endif %}>
+                    <span class="nav-icon">&#9654;</span> Pipeline
                 </a></li>
-                <li><a href="/queue" {% if '/queue' in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9654;</span> Queue
-                </a></li>
-                <li><a href="/usage" {% if '/usage' in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9636;</span> Usage
-                </a></li>
-                <li><a href="/analytics" {% if '/analytics' in request.path %}class="active"{% endif %}>
+                <li class="nav-group-label">Insights</li>
+                <li><a href="/analytics" {% if '/analytics' in request.path or '/calendar' in request.path %}class="active"{% endif %}>
                     <span class="nav-icon">&#9652;</span> Analytics
-                </a></li>
-                <li><a href="/history" {% if '/history' in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#8986;</span> History
                 </a></li>
                 <li><a href="/engagement" {% if '/engagement' in request.path %}class="active"{% endif %}>
                     <span class="nav-icon">&#9993;</span> Engagement
                 </a></li>
-                <li><a href="/limits" {% if '/limits' in request.path %}class="active"{% endif %}>
-                    <span class="nav-icon">&#9888;</span> Limits
-                </a></li>
-                <li><a href="/settings" {% if '/settings' in request.path %}class="active"{% endif %}>
+                <li class="nav-group-label">Config</li>
+                <li><a href="/settings" {% if '/settings' in request.path or '/usage' in request.path or '/limits' in request.path %}class="active"{% endif %}>
                     <span class="nav-icon">&#9881;</span> Settings
                 </a></li>
             </ul>
@@ -63,7 +51,7 @@
             {% block content %}{% endblock %}
 
             <footer>
-                Quantum Brief Bot
+                @QEdgeIntel
             </footer>
         </main>
     </div>

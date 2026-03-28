@@ -9,6 +9,7 @@ bp = Blueprint("settings", __name__)
 
 @bp.route("/settings")
 def settings_page():
+    tab = request.args.get("tab", "quality")
     qconfig = get_quality_config()
     categories = get_topic_categories()
 
@@ -33,6 +34,7 @@ def settings_page():
 
     return render_template(
         "settings.html",
+        tab=tab,
         qconfig=qconfig,
         ai_phrases=ai_phrases,
         jargon_list=jargon_list,
@@ -53,18 +55,18 @@ def save_quality_config():
     updates["readability_enabled"] = 1 if form.get("readability_enabled") else 0
     updates["emoji_enabled"] = 1 if form.get("emoji_enabled") else 0
 
-    # Weights
+    # Weights (all 7 components)
     try:
-        w_ai = float(form.get("weight_ai", 0.15))
-        w_vibes = float(form.get("weight_vibes", 0.20))
-        w_read = float(form.get("weight_readability", 0.10))
-        w_emoji = float(form.get("weight_emoji", 0.10))
-        total = w_ai + w_vibes + w_read + w_emoji
+        weight_keys = ["weight_substance", "weight_tone", "weight_data_accuracy",
+                       "weight_variety", "weight_ai", "weight_readability", "weight_emoji"]
+        defaults = [0.30, 0.25, 0.20, 0.15, 0.15, 0.15, 0.05]
+        raw = {}
+        for key, default in zip(weight_keys, defaults):
+            raw[key] = float(form.get(key, default))
+        total = sum(raw.values())
         if total > 0:
-            updates["weight_ai"] = round(w_ai / total, 2)
-            updates["weight_vibes"] = round(w_vibes / total, 2)
-            updates["weight_readability"] = round(w_read / total, 2)
-            updates["weight_emoji"] = round(w_emoji / total, 2)
+            for key in weight_keys:
+                updates[key] = round(raw[key] / total, 3)
     except (ValueError, TypeError):
         pass
 
@@ -142,11 +144,27 @@ def test_score():
     else:
         color = "var(--qb-red)"
 
+    # Build component breakdown
+    components = [
+        ("Substance", result.get("substance", {}).get("score")),
+        ("Tone", result.get("tone", {}).get("score")),
+        ("Data Acc.", result.get("data_accuracy", {}).get("score")),
+        ("Variety", result.get("variety", {}).get("score")),
+        ("Anti-AI", result["ai"]["score"]),
+        ("Readability", result["readability"]["score"]),
+        ("Format", result["emoji"]["score"]),
+    ]
+
     html = f'<div class="post-card" style="margin-top:0.5rem">'
     html += f'<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">'
     html += f'<span class="score-badge" style="background:rgba(99,102,241,0.15);color:{color};font-size:1.1rem;font-weight:800">{overall:.0f}</span>'
-    html += f'<span style="font-size:0.75rem;color:var(--qb-dim)">AI: {result["ai"]["score"]} | Read: {result["readability"]["score"]} | Emoji: {result["emoji"]["score"]}</span>'
-    html += '</div>'
+    html += '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;font-size:0.72rem">'
+    for label, score in components:
+        if score is not None:
+            s = int(round(score))
+            sc = "var(--qb-green)" if s >= 70 else ("var(--qb-accent-soft)" if s >= 50 else "var(--qb-red)")
+            html += f'<span style="color:{sc}">{label}:{s}</span>'
+    html += '</div></div>'
 
     if result["penalties"]:
         html += '<div style="display:flex;flex-wrap:wrap;gap:0.25rem">'
@@ -200,3 +218,59 @@ def save_image_config():
 
     update_image_config(**updates)
     return '<div style="color:var(--qb-green);font-size:0.85rem;padding:0.5rem">Image settings saved.</div>'
+
+
+@bp.route("/api/settings/tab/quality")
+def quality_tab():
+    """Return quality settings content (redirects to full page for simplicity)."""
+    from flask import redirect
+    return redirect("/settings?tab=quality")
+
+
+@bp.route("/api/settings/tab/budget")
+def budget_tab():
+    """Return API budget content as HTML fragment."""
+    from storage.database import get_api_usage_summary, get_monthly_usage, get_monthly_usage_by_day, get_monthly_usage_by_endpoint
+    from limiter.budget_forecaster import get_budget_status
+
+    usage = get_api_usage_summary()
+    mistral_budget = get_budget_status("mistral")
+    groq_budget = get_budget_status("groq")
+
+    mistral_monthly = get_monthly_usage("mistral")
+    groq_monthly = get_monthly_usage("groq")
+    mistral_by_day = get_monthly_usage_by_day("mistral")
+    mistral_by_endpoint = get_monthly_usage_by_endpoint("mistral")
+    groq_by_endpoint = get_monthly_usage_by_endpoint("groq")
+
+    return render_template("_budget_tab.html",
+                           usage=usage,
+                           mistral_budget=mistral_budget,
+                           groq_budget=groq_budget,
+                           mistral_monthly=mistral_monthly,
+                           groq_monthly=groq_monthly,
+                           mistral_by_day=mistral_by_day,
+                           mistral_by_endpoint=mistral_by_endpoint,
+                           groq_by_endpoint=groq_by_endpoint)
+
+
+@bp.route("/api/settings/tab/safety")
+def safety_tab():
+    """Return safety/limits content as HTML fragment."""
+    from storage.database import get_usage_limits, get_kill_switch, get_recent_alerts, get_monthly_budget
+    from limiter.budget_forecaster import get_budget_status, get_throttle_recommendations
+
+    limits = get_usage_limits()
+    ks = get_kill_switch()
+    alerts = get_recent_alerts()
+    budget = get_monthly_budget()
+    mistral_budget = get_budget_status("mistral")
+    throttle = get_throttle_recommendations("mistral")
+
+    return render_template("_safety_tab.html",
+                           limits=limits,
+                           kill_switch=ks,
+                           alerts=alerts,
+                           budget=budget,
+                           mistral_budget=mistral_budget,
+                           throttle=throttle)

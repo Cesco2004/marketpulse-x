@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - Quantum Brief{% endblock %}
+{% block title %}Dashboard - QEdge Intel{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -10,7 +10,7 @@
 {% if kill_switch_active %}
 <div style="background:var(--red,#ef4444);color:white;padding:0.75rem 1.2rem;border-radius:8px;margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;font-size:0.88rem">
     <span><strong>KILL SWITCH ACTIVE</strong>{% if kill_switch_reason %} &mdash; {{ kill_switch_reason }}{% endif %}</span>
-    <a href="/limits" style="color:white;text-decoration:underline;font-size:0.82rem">Manage</a>
+    <a href="/settings" style="color:white;text-decoration:underline;font-size:0.82rem">Manage</a>
 </div>
 {% endif %}
 
@@ -68,7 +68,7 @@
 <div class="stats-grid">
     <div class="stat-card">
         <div class="number">{{ stats.total_articles }}</div>
-        <div class="label">Articles</div>
+        <div class="label">Data Points</div>
     </div>
     <div class="stat-card">
         <div class="number">{{ stats.get('pending_review', 0) }}</div>
@@ -100,6 +100,56 @@
         </span>
     </div>
     {% endfor %}
+</div>
+
+<!-- Market Intelligence -->
+<div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Market Intelligence</span>
+    <a href="/markets" style="font-size:0.75rem;font-weight:400">View all &rarr;</a>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.6rem;margin-bottom:1.25rem">
+    <!-- Alerts summary -->
+    <div class="process-card" style="flex-direction:column;align-items:flex-start;gap:0.4rem">
+        <div style="display:flex;align-items:center;gap:0.5rem;width:100%">
+            <span style="font-weight:600;font-size:0.85rem">Alerts</span>
+            {% set pending_count = alert_stats.get('pending', 0) %}
+            {% if pending_count > 0 %}
+            <span class="badge" style="background:rgba(248,113,113,0.15);color:var(--qb-red);font-size:0.65rem">{{ pending_count }} pending</span>
+            {% else %}
+            <span style="font-size:0.72rem;color:var(--qb-dim)">none pending</span>
+            {% endif %}
+        </div>
+        {% if pending_alerts %}
+        {% for a in pending_alerts %}
+        <div style="font-size:0.72rem;color:var(--text-secondary)">
+            <span style="font-weight:600;color:var(--text-primary)">{{ a.asset_name }}</span>
+            <span style="color:{% if a.magnitude >= 5 %}var(--qb-red){% else %}var(--qb-yellow){% endif %}">{{ '%+.1f'|format(a.magnitude) }}%</span>
+            {{ a.alert_type }}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="font-size:0.72rem;color:var(--qb-dim)">No significant market moves detected.</div>
+        {% endif %}
+    </div>
+    <!-- Narratives summary -->
+    <div class="process-card" style="flex-direction:column;align-items:flex-start;gap:0.4rem">
+        <div style="display:flex;align-items:center;gap:0.5rem;width:100%">
+            <span style="font-weight:600;font-size:0.85rem">Narratives (24h)</span>
+            {% if recent_narratives %}
+            <span style="font-size:0.72rem;color:var(--qb-accent-soft)">{{ recent_narratives|length }}+ detected</span>
+            {% endif %}
+        </div>
+        {% if recent_narratives %}
+        {% for n in recent_narratives %}
+        <div style="font-size:0.72rem;color:var(--text-secondary)">
+            <span style="font-weight:600;color:var(--text-primary)">{{ n.label }}</span>
+            <span style="color:var(--qb-accent-soft)">({{ (n.strength * 100)|int }}%)</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="font-size:0.72rem;color:var(--qb-dim)">No narratives yet. Run a fetch cycle.</div>
+        {% endif %}
+    </div>
 </div>
 
 <!-- System Health -->
@@ -149,25 +199,31 @@
     </div>
 </div>
 
-<!-- Monthly Budget -->
-<div class="section-title">Monthly Budget</div>
-<div class="usage-grid">
-    <div class="usage-card">
-        <h4>Mistral</h4>
-        <div class="usage-number">{{ "{:,}".format(mistral_budget.tokens_used) }} <span style="font-size:0.7rem;color:var(--text-secondary)">/ {{ "{:,}".format(mistral_budget.monthly_limit) }}</span></div>
-        <div class="usage-detail">tokens this month ({{ mistral_budget.pct_used }}%)</div>
-        <div class="progress-track" style="margin:0.4rem 0">
-            <div class="progress-fill" style="width:{{ [mistral_budget.pct_used, 100]|min }}%;background:{% if mistral_budget.pct_used < 60 %}var(--green){% elif mistral_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
+<!-- Budget (compact) -->
+<div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Budget</span>
+    <a href="/settings?tab=budget" style="font-size:0.75rem;font-weight:400">Details &rarr;</a>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem;margin-bottom:1.25rem">
+    <div class="process-card" style="flex-direction:column;align-items:stretch;gap:0.3rem">
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem">
+            <span style="font-weight:600">Mistral</span>
+            <span style="color:{% if mistral_budget.pct_used < 60 %}var(--green){% elif mistral_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}">{{ mistral_budget.pct_used }}%</span>
         </div>
-        <div class="usage-detail">{{ mistral_budget.days_remaining }} days remaining &middot; ~{{ "{:,}".format(mistral_budget.recommended_daily_cap) }} tokens/day recommended</div>
+        <div style="height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:{{ [mistral_budget.pct_used, 100]|min }}%;background:{% if mistral_budget.pct_used < 60 %}var(--green){% elif mistral_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %};border-radius:2px"></div>
+        </div>
+        <div style="font-size:0.68rem;color:var(--qb-dim)">{{ mistral_budget.days_remaining }}d left</div>
     </div>
-    <div class="usage-card">
-        <h4>Groq</h4>
-        <div class="usage-number">{{ "{:,}".format(groq_budget.tokens_used) }} <span style="font-size:0.7rem;color:var(--text-secondary)">/ {{ "{:,}".format(groq_budget.monthly_limit) }}</span></div>
-        <div class="usage-detail">tokens this month ({{ groq_budget.pct_used }}%)</div>
-        <div class="progress-track" style="margin:0.4rem 0">
-            <div class="progress-fill" style="width:{{ [groq_budget.pct_used, 100]|min }}%;background:{% if groq_budget.pct_used < 60 %}var(--green){% elif groq_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}"></div>
+    <div class="process-card" style="flex-direction:column;align-items:stretch;gap:0.3rem">
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem">
+            <span style="font-weight:600">Groq</span>
+            <span style="color:{% if groq_budget.pct_used < 60 %}var(--green){% elif groq_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %}">{{ groq_budget.pct_used }}%</span>
         </div>
+        <div style="height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:{{ [groq_budget.pct_used, 100]|min }}%;background:{% if groq_budget.pct_used < 60 %}var(--green){% elif groq_budget.pct_used < 85 %}var(--yellow){% else %}var(--red){% endif %};border-radius:2px"></div>
+        </div>
+        <div style="font-size:0.68rem;color:var(--qb-dim)">Free tier</div>
     </div>
 </div>
 

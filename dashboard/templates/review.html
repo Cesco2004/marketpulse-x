@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Review - Quantum Brief{% endblock %}
+{% block title %}Review - QEdge Intel{% endblock %}
 
 {% block content %}
 <h2>Review Posts</h2>
@@ -38,28 +38,56 @@
             <span class="{% if clen <= 260 %}chars-ok{% elif clen <= 280 %}chars-warn{% else %}chars-over{% endif %}">
                 {{ clen }} chars
             </span>
-            {% if post.quality_score is not none %}
-            <span style="font-size:0.7rem;color:var(--qb-dim)">
-                AI:{{ post.ai_score|round(0)|int if post.ai_score is not none else '?' }}
-                Read:{{ post.readability_score|round(0)|int if post.readability_score is not none else '?' }}
-                Emoji:{{ post.emoji_score|round(0)|int if post.emoji_score is not none else '?' }}
-            </span>
-            {% endif %}
             <span style="color:var(--qb-gray);font-size:0.8rem">Batch: {{ post.batch_id }}</span>
         </div>
 
-        {% if post.score_details and post.score_details != '{}' %}
+        {% set narrs = batch_narratives.get(post.batch_id, []) %}
+        {% if narrs %}
+        <div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.3rem">
+            {% for n in narrs %}
+            <span class="badge" style="font-size:0.62rem;background:rgba(99,102,241,0.1);color:var(--qb-accent-soft)">{{ n.label }} ({{ (n.strength * 100)|int }}%)</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if post.quality_score is not none %}
+        {% set sd = post.score_details|from_json if post.score_details else {} %}
+        <div style="margin-top:0.4rem;display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:0.3rem 0.6rem">
+            {% set components = [
+                ('Substance', sd.get('substance')),
+                ('Tone', sd.get('tone')),
+                ('Data Acc.', sd.get('data_accuracy')),
+                ('Variety', sd.get('variety')),
+                ('Anti-AI', post.ai_score),
+                ('Readability', post.readability_score),
+                ('Format', post.emoji_score)
+            ] %}
+            {% for label, score in components %}
+            {% if score is not none %}
+            {% set s = score|round(0)|int %}
+            {% set color = 'var(--qb-green)' if s >= 70 else ('var(--qb-accent-soft)' if s >= 50 else 'var(--qb-red)') %}
+            <div style="font-size:0.68rem">
+                <div style="display:flex;justify-content:space-between;color:var(--qb-dim);margin-bottom:1px">
+                    <span>{{ label }}</span><span style="color:{{ color }}">{{ s }}</span>
+                </div>
+                <div style="height:3px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden">
+                    <div style="height:100%;width:{{ s }}%;background:{{ color }};border-radius:2px"></div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        {% if sd.get('penalties') %}
         <details style="margin-top:0.3rem">
-            <summary>Score details</summary>
+            <summary style="font-size:0.72rem">Penalties & details</summary>
             <div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.3rem">
-                {% set details = post.score_details|tojson|default('{}') %}
-                {% if post.score_details %}
-                    {% for penalty in (post.score_details|from_json).get('penalties', []) %}
-                    <span class="penalty-tag">{{ penalty }}</span>
-                    {% endfor %}
-                {% endif %}
+                {% for penalty in sd.get('penalties', []) %}
+                <span class="penalty-tag">{{ penalty }}</span>
+                {% endfor %}
             </div>
         </details>
+        {% endif %}
         {% endif %}
 
         {% if post.has_image and post.image_url %}

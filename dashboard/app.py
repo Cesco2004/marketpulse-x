@@ -16,7 +16,7 @@ def create_app():
         template_folder=os.path.join(os.path.dirname(__file__), "templates"),
         static_folder=os.path.join(os.path.dirname(__file__), "static"),
     )
-    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "quantum-brief-local-dashboard")
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "qedge-intel-local-dashboard")
 
     # Flask-Login
     login_manager.init_app(app)
@@ -57,9 +57,13 @@ def create_app():
     from dashboard.routes.engagement import bp as engagement_bp
     from dashboard.routes.limits import bp as limits_bp
     from dashboard.routes.analytics import bp as analytics_bp
+    from dashboard.routes.markets import bp as markets_bp
+    from dashboard.routes.pipeline_page import bp as pipeline_bp
 
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(articles_bp)
+    app.register_blueprint(markets_bp)
+    app.register_blueprint(pipeline_bp)
     app.register_blueprint(review_bp)
     app.register_blueprint(queue_bp)
     app.register_blueprint(history_bp)

@@ -1,10 +1,53 @@
 {% extends "base.html" %}
-{% block title %}Settings - Quantum Brief{% endblock %}
+{% block title %}Settings - QEdge Intel{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h2>Settings</h2>
 </div>
+
+<!-- Settings Tabs -->
+<div style="display:flex;gap:0;border-bottom:1px solid var(--border-color);margin-bottom:1.5rem">
+    <button class="tab-btn {% if not tab or tab == 'quality' %}active{% endif %}"
+            hx-get="/api/settings/tab/quality" hx-target="#settings-tab-content" hx-swap="innerHTML" hx-push-url="/settings?tab=quality"
+            onclick="document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')">
+        Quality
+    </button>
+    <button class="tab-btn {% if tab == 'budget' %}active{% endif %}"
+            hx-get="/api/settings/tab/budget" hx-target="#settings-tab-content" hx-swap="innerHTML" hx-push-url="/settings?tab=budget"
+            onclick="document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')">
+        API Budget
+    </button>
+    <button class="tab-btn {% if tab == 'safety' %}active{% endif %}"
+            hx-get="/api/settings/tab/safety" hx-target="#settings-tab-content" hx-swap="innerHTML" hx-push-url="/settings?tab=safety"
+            onclick="document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')">
+        Safety & Limits
+    </button>
+</div>
+
+<style>
+.tab-btn {
+    padding: 0.6rem 1.2rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+</style>
+
+<div id="settings-tab-content">
+{% if tab == 'budget' %}
+<div hx-get="/api/settings/tab/budget" hx-trigger="load" hx-swap="innerHTML" hx-target="#settings-tab-content"></div>
+{% elif tab == 'safety' %}
+<div hx-get="/api/settings/tab/safety" hx-trigger="load" hx-swap="innerHTML" hx-target="#settings-tab-content"></div>
+{% else %}
+<!-- Quality tab (default) -->
 
 <!-- Test Score Tool -->
 <div class="section-title">Test Tweet Score</div>
@@ -35,21 +78,33 @@
             </label>
         </div>
 
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:0.75rem">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0.75rem;margin-bottom:0.75rem">
             <div>
-                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">AI Weight</label>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Substance</label>
+                <input type="number" name="weight_substance" value="{{ qconfig.weight_substance|default(0.30) }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Tone</label>
+                <input type="number" name="weight_tone" value="{{ qconfig.weight_tone|default(0.25) }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Data Accuracy</label>
+                <input type="number" name="weight_data_accuracy" value="{{ qconfig.weight_data_accuracy|default(0.20) }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Variety</label>
+                <input type="number" name="weight_variety" value="{{ qconfig.weight_variety|default(0.15) }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
+            </div>
+            <div>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Anti-AI</label>
                 <input type="number" name="weight_ai" value="{{ qconfig.weight_ai }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
             </div>
             <div>
-                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Vibes Weight</label>
-                <input type="number" name="weight_vibes" value="{{ qconfig.weight_vibes|default(0.20) }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
-            </div>
-            <div>
-                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Readability Weight</label>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Readability</label>
                 <input type="number" name="weight_readability" value="{{ qconfig.weight_readability }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
             </div>
             <div>
-                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Emoji Weight</label>
+                <label style="font-size:0.65rem;color:var(--qb-dim);text-transform:uppercase">Format</label>
                 <input type="number" name="weight_emoji" value="{{ qconfig.weight_emoji }}" step="0.05" min="0" max="1" style="font-size:0.8rem;padding:0.3rem">
             </div>
         </div>
@@ -176,5 +231,8 @@
     <button type="submit" class="outline" style="padding:0.3rem 0.85rem;font-size:0.78rem">Save Image Settings</button>
     <div id="image-result"></div>
 </form>
+
+{% endif %}
+</div><!-- /settings-tab-content -->
 
 {% endblock %}

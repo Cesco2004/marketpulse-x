@@ -354,6 +354,21 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_alerts_status ON market_alerts(status)")
 
+    # --- Narrative log (correlation engine detections) ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS narrative_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id TEXT,
+            pattern_type TEXT NOT NULL,
+            label TEXT NOT NULL,
+            strength REAL DEFAULT 0,
+            synthesis_hint TEXT,
+            data_points_json TEXT,
+            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_narrative_log_batch ON narrative_log(batch_id)")
+
     # --- Chart config (singleton) ---
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS chart_config (
@@ -383,6 +398,14 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Add missing weight columns to quality_config (safe migration)
+    for col, default in [("weight_substance", 0.30), ("weight_tone", 0.25),
+                         ("weight_data_accuracy", 0.20), ("weight_variety", 0.15)]:
+        try:
+            cursor.execute(f"ALTER TABLE quality_config ADD COLUMN {col} REAL DEFAULT {default}")
+        except Exception:
+            pass  # Column already exists
 
     # Insert default configs if empty
     cursor.execute("INSERT OR IGNORE INTO schedule_config (id) VALUES (1)")
@@ -2172,6 +2195,60 @@ def get_alert_stats():
     stats = {row["status"]: row["count"] for row in cursor.fetchall()}
     conn.close()
     return stats
+
+
+# --- Narrative Log ---
+
+def save_narratives(narratives, batch_id):
+    """Save detected narratives from the correlation engine."""
+    if not narratives:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    import json
+    count = 0
+    for n in narratives:
+        cursor.execute(
+            """INSERT INTO narrative_log (batch_id, pattern_type, label, strength, synthesis_hint, data_points_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (batch_id, n.get("pattern_type", ""), n.get("label", ""),
+             n.get("strength", 0), n.get("synthesis_hint", ""),
+             json.dumps(n.get("data_points", []))),
+        )
+        count += 1
+    conn.commit()
+    conn.close()
+    return count
+
+
+def get_recent_narratives(hours=24):
+    """Get narratives detected in the last N hours."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT * FROM narrative_log
+           WHERE detected_at >= datetime('now', ?)
+           ORDER BY detected_at DESC""",
+        (f"-{hours} hours",),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_narratives_for_batch(batch_id):
+    """Get narratives associated with a specific batch."""
+    if not batch_id:
+        return []
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM narrative_log WHERE batch_id = ? ORDER BY strength DESC",
+        (batch_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # --- Chart Config ---
