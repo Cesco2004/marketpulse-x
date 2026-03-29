@@ -853,7 +853,7 @@ def score_post(text, config=None, existing_posts=None):
     w_variety = cfg.get("weight_variety", 0.15)
     w_ai = cfg.get("weight_ai", 0.15)
     w_read = cfg.get("weight_readability", 0.15)
-    w_emoji = cfg.get("weight_emoji", 0.05)
+    w_emoji = cfg.get("weight_emoji", 0.00)
 
     # Normalize weights to sum to 1.0
     total_weight = w_substance + w_data_accuracy + w_tone + w_variety + w_ai + w_read + w_emoji
@@ -880,7 +880,8 @@ def score_post(text, config=None, existing_posts=None):
     all_penalties = (
         substance["penalties"] + variety["penalties"]
         + ai["penalties"] + readability["penalties"]
-        + emoji["penalties"] + duplicate["penalties"]
+        + (emoji["penalties"] if cfg.get("emoji_enabled", False) else [])
+        + duplicate["penalties"]
         + tone.get("penalties", [])
         + data_accuracy.get("penalties", [])
     )
